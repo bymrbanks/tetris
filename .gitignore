@@ -17,3 +17,4 @@ raylib/
 # OS junk
 .DS_Store
 .claude/
+.vercel

@@ -1,0 +1,14 @@
+# Exclude source, build artifacts, and tooling from Vercel uploads.
+raylib/
+build/
+Tetris.app/
+AppIcon.iconset/
+*.o
+*.dSYM/
+tetris
+make_icon
+icon_1024.png
+AppIcon.icns
+.git/
+.claude/
+.DS_Store
