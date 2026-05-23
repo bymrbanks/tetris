@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Tetris</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: radial-gradient(circle at 50% 30%, #2a2440 0%, #0e0c1c 70%);
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      color: #e8e8e8;
+      -webkit-user-select: none; user-select: none;
+    }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+    #canvas-wrap {
+      box-shadow: 0 12px 60px rgba(0, 0, 0, 0.65);
+      border-radius: 10px;
+      overflow: hidden;
+      line-height: 0;
+    }
+    canvas {
+      display: block;
+      width: 92vmin; height: 92vmin;
+      outline: none; background: #14101e;
+      image-rendering: pixelated;
+    }
+    #status { font-size: 12px; color: #888; letter-spacing: 0.3px; height: 14px; }
+    #loader { width: 220px; height: 3px; background: #2a2638; border-radius: 2px; overflow: hidden; }
+    #loader > div {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #4ad6ff, #c266ff);
+      transition: width 0.2s ease;
+    }
+    #footer { position: fixed; bottom: 10px; font-size: 11px; color: #555; }
+    #footer a { color: #777; text-decoration: none; }
+    #footer a:hover { color: #aaa; }
+  </style>
+</head>
+<body>
+  <div id="canvas-wrap">
+    <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+  </div>
+  <div id="status">Loading…</div>
+  <div id="loader"><div></div></div>
+  <div id="footer">C++ · raylib · WebAssembly &nbsp;·&nbsp; <a href="https://github.com/bymrbanks/tetris">source</a></div>
+
+  <script>
+    var statusEl = document.getElementById('status');
+    var loaderBar = document.querySelector('#loader > div');
+    var loaderEl = document.getElementById('loader');
+    var canvas = document.getElementById('canvas');
+
+    var Module = {
+      canvas: canvas,
+      print: function(t) { console.log(t); },
+      printErr: function(t) { console.error(t); },
+      setStatus: function(text) {
+        if (!text) {
+          statusEl.style.display = 'none';
+          loaderEl.style.display = 'none';
+          canvas.focus();
+          return;
+        }
+        statusEl.textContent = text;
+        var m = text.match(/([\d.]+)\/([\d.]+)/);
+        if (m) {
+          loaderBar.style.width = (parseFloat(m[1]) / parseFloat(m[2]) * 100) + '%';
+        }
+      },
+      totalDependencies: 0,
+      monitorRunDependencies: function(left) {
+        this.totalDependencies = Math.max(this.totalDependencies, left);
+      }
+    };
+
+    canvas.addEventListener('click', function() { canvas.focus(); });
+    window.addEventListener('keydown', function(e) {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].indexOf(e.key) !== -1) {
+        e.preventDefault();
+      }
+    });
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

@@ -1,0 +1,19 @@
+# Build artifacts
+tetris
+*.o
+*.dSYM/
+build/
+
+# macOS app bundle
+Tetris.app/
+AppIcon.iconset/
+AppIcon.icns
+icon_1024.png
+make_icon
+
+# raylib source (cloned for web build; not committed)
+raylib/
+
+# OS junk
+.DS_Store
+.claude/

@@ -1,0 +1,739 @@
+// Classic Tetris in C++ with raylib.
+//
+// Build:  make
+// Run:    make run     (or ./tetris)
+//
+// Controls:
+//   Left / Right  - move
+//   Down          - soft drop
+//   Up / X        - rotate clockwise
+//   Z / Ctrl      - rotate counter-clockwise
+//   Space         - hard drop
+//   C / Shift     - hold piece
+//   P / Esc       - pause
+//   Enter         - start / restart
+//   Q             - quit to menu (from pause/game-over)
+
+#include "raylib.h"
+#include <algorithm>
+#include <cmath>
+#include <random>
+#include <vector>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
+// =================================================================
+// Constants
+// =================================================================
+constexpr int BOARD_W = 10;
+constexpr int BOARD_H = 20;
+constexpr int CELL    = 30;
+constexpr int BOARD_PX_W = BOARD_W * CELL;
+constexpr int BOARD_PX_H = BOARD_H * CELL;
+constexpr int BOARD_X = 210;
+constexpr int BOARD_Y = 50;
+constexpr int WIN_W   = 720;
+constexpr int WIN_H   = 720;
+
+constexpr float DAS_DELAY   = 0.16f;   // delayed auto-shift initial wait
+constexpr float DAS_REPEAT  = 0.04f;   // shift repeat interval
+constexpr float LOCK_DELAY  = 0.50f;   // grace period before locking on ground
+constexpr float CLEAR_FLASH = 0.30f;   // line-clear animation length
+
+// =================================================================
+// Tetromino shapes — 7 pieces, 4 rotations, 4x4 grid each
+// =================================================================
+const int PIECES[7][4][4][4] = {
+    // I
+    {
+        {{0,0,0,0},{1,1,1,1},{0,0,0,0},{0,0,0,0}},
+        {{0,0,1,0},{0,0,1,0},{0,0,1,0},{0,0,1,0}},
+        {{0,0,0,0},{0,0,0,0},{1,1,1,1},{0,0,0,0}},
+        {{0,1,0,0},{0,1,0,0},{0,1,0,0},{0,1,0,0}}
+    },
+    // O
+    {
+        {{0,1,1,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}},
+        {{0,1,1,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}},
+        {{0,1,1,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}},
+        {{0,1,1,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}}
+    },
+    // T
+    {
+        {{0,1,0,0},{1,1,1,0},{0,0,0,0},{0,0,0,0}},
+        {{0,1,0,0},{0,1,1,0},{0,1,0,0},{0,0,0,0}},
+        {{0,0,0,0},{1,1,1,0},{0,1,0,0},{0,0,0,0}},
+        {{0,1,0,0},{1,1,0,0},{0,1,0,0},{0,0,0,0}}
+    },
+    // S
+    {
+        {{0,1,1,0},{1,1,0,0},{0,0,0,0},{0,0,0,0}},
+        {{0,1,0,0},{0,1,1,0},{0,0,1,0},{0,0,0,0}},
+        {{0,0,0,0},{0,1,1,0},{1,1,0,0},{0,0,0,0}},
+        {{1,0,0,0},{1,1,0,0},{0,1,0,0},{0,0,0,0}}
+    },
+    // Z
+    {
+        {{1,1,0,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}},
+        {{0,0,1,0},{0,1,1,0},{0,1,0,0},{0,0,0,0}},
+        {{0,0,0,0},{1,1,0,0},{0,1,1,0},{0,0,0,0}},
+        {{0,1,0,0},{1,1,0,0},{1,0,0,0},{0,0,0,0}}
+    },
+    // J
+    {
+        {{1,0,0,0},{1,1,1,0},{0,0,0,0},{0,0,0,0}},
+        {{0,1,1,0},{0,1,0,0},{0,1,0,0},{0,0,0,0}},
+        {{0,0,0,0},{1,1,1,0},{0,0,1,0},{0,0,0,0}},
+        {{0,1,0,0},{0,1,0,0},{1,1,0,0},{0,0,0,0}}
+    },
+    // L
+    {
+        {{0,0,1,0},{1,1,1,0},{0,0,0,0},{0,0,0,0}},
+        {{0,1,0,0},{0,1,0,0},{0,1,1,0},{0,0,0,0}},
+        {{0,0,0,0},{1,1,1,0},{1,0,0,0},{0,0,0,0}},
+        {{1,1,0,0},{0,1,0,0},{0,1,0,0},{0,0,0,0}}
+    }
+};
+
+// index 0 = empty, 1..7 = piece colors in PIECES order (I,O,T,S,Z,J,L)
+const Color PIECE_COLOR[8] = {
+    {  20,  20,  30, 255 },   // empty
+    {   0, 240, 240, 255 },   // I  cyan
+    { 240, 220,  40, 255 },   // O  yellow
+    { 180,  60, 240, 255 },   // T  purple
+    {  40, 220,  60, 255 },   // S  green
+    { 240,  60,  60, 255 },   // Z  red
+    {  60, 100, 240, 255 },   // J  blue
+    { 240, 150,  40, 255 }    // L  orange
+};
+
+// Background gradient changes per stage (level), giving "stages" a feel.
+const Color STAGE_BG[10] = {
+    {  20,  22,  36, 255 },
+    {  22,  30,  48, 255 },
+    {  34,  20,  52, 255 },
+    {  48,  20,  44, 255 },
+    {  52,  30,  20, 255 },
+    {  46,  44,  18, 255 },
+    {  20,  46,  30, 255 },
+    {  18,  46,  46, 255 },
+    {  22,  22,  60, 255 },
+    {  44,  16,  16, 255 }
+};
+
+// =================================================================
+// State
+// =================================================================
+struct Piece { int type; int rot; int x; int y; };
+
+enum class GameState { Menu, Playing, Paused, GameOver };
+
+static int        board[BOARD_H][BOARD_W];
+static Piece      current;
+static Piece      nextP;
+static int        holdT = -1;
+static bool       canHold = true;
+static int        score = 0;
+static int        lines = 0;
+static int        level = 1;
+static int        highScore = 0;
+static GameState  state = GameState::Menu;
+static float      dropTimer = 0.0f;
+static float      dropInterval = 1.0f;
+static float      lockTimer = 0.0f;
+static float      dasTimer = 0.0f;
+static int        dasDir = 0;
+static bool       clearAnimating = false;
+static float      clearAnimTimer = 0.0f;
+static int        clearingLines[4];
+static int        numClearing = 0;
+static int        lastClearCount = 0;
+static float      lastClearText = 0.0f;
+
+static std::mt19937       rng;
+static std::vector<int>   bag;
+
+// =================================================================
+// Utilities
+// =================================================================
+static inline int cellOf(const Piece& p, int r, int c) {
+    return PIECES[p.type][p.rot][r][c];
+}
+
+static int drawNextType() {
+    if (bag.empty()) {
+        bag = {0, 1, 2, 3, 4, 5, 6};
+        std::shuffle(bag.begin(), bag.end(), rng);
+    }
+    int t = bag.back();
+    bag.pop_back();
+    return t;
+}
+
+static Piece spawnPiece(int type) {
+    Piece p;
+    p.type = type;
+    p.rot  = 0;
+    p.x    = 3;
+    p.y    = (type == 0) ? -1 : 0;   // I spawns one row higher (matches NES feel)
+    return p;
+}
+
+static bool isValid(const Piece& p) {
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            if (!cellOf(p, r, c)) continue;
+            int bx = p.x + c;
+            int by = p.y + r;
+            if (bx < 0 || bx >= BOARD_W || by >= BOARD_H) return false;
+            if (by >= 0 && board[by][bx])                 return false;
+        }
+    }
+    return true;
+}
+
+static void updateDropInterval() {
+    // NES-style speed curve: each level ~17% faster, capped at 50ms.
+    float v = 1.0f * std::pow(0.83f, (float)(level - 1));
+    if (v < 0.05f) v = 0.05f;
+    dropInterval = v;
+}
+
+static bool tryMove(int dx, int dy) {
+    Piece p = current;
+    p.x += dx;
+    p.y += dy;
+    if (!isValid(p)) return false;
+    current = p;
+    lockTimer = 0.0f;
+    return true;
+}
+
+static bool tryRotate(int dir) {
+    Piece p = current;
+    p.rot = (p.rot + dir + 4) % 4;
+    if (isValid(p)) { current = p; lockTimer = 0; return true; }
+    // basic wall kicks: try nudging horizontally (and vertically for I).
+    int kicks[] = { 1, -1, 2, -2 };
+    for (int k : kicks) {
+        Piece q = p;
+        q.x += k;
+        if (isValid(q)) { current = q; lockTimer = 0; return true; }
+    }
+    // give I-piece an upward kick attempt
+    if (p.type == 0) {
+        Piece q = p;
+        q.y -= 1;
+        if (isValid(q)) { current = q; lockTimer = 0; return true; }
+    }
+    return false;
+}
+
+static int ghostY() {
+    Piece p = current;
+    while (true) {
+        Piece q = p;
+        q.y++;
+        if (!isValid(q)) return p.y;
+        p = q;
+    }
+}
+
+static void spawnNext(bool fromHold = false);
+
+static void lockPiece() {
+    // Stamp piece onto board.
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            if (!cellOf(current, r, c)) continue;
+            int by = current.y + r;
+            int bx = current.x + c;
+            if (by >= 0 && by < BOARD_H && bx >= 0 && bx < BOARD_W) {
+                board[by][bx] = current.type + 1;
+            }
+        }
+    }
+
+    // Find full rows.
+    numClearing = 0;
+    for (int y = 0; y < BOARD_H; y++) {
+        bool full = true;
+        for (int x = 0; x < BOARD_W; x++) {
+            if (!board[y][x]) { full = false; break; }
+        }
+        if (full) clearingLines[numClearing++] = y;
+    }
+
+    if (numClearing > 0) {
+        clearAnimating = true;
+        clearAnimTimer = 0.0f;
+    } else {
+        spawnNext();
+    }
+}
+
+static void finishLineClear() {
+    static const int LINE_SCORE[5] = { 0, 100, 300, 500, 800 };
+    score += LINE_SCORE[numClearing] * level;
+    lines += numClearing;
+    lastClearCount = numClearing;
+    lastClearText  = 1.5f;
+
+    int newLevel = lines / 10 + 1;
+    if (newLevel != level) {
+        level = newLevel;
+        updateDropInterval();
+    }
+
+    // Remove cleared lines, dropping rows above.
+    for (int i = 0; i < numClearing; i++) {
+        int line = clearingLines[i];
+        for (int y = line; y > 0; y--) {
+            for (int x = 0; x < BOARD_W; x++) board[y][x] = board[y - 1][x];
+        }
+        for (int x = 0; x < BOARD_W; x++) board[0][x] = 0;
+    }
+
+    numClearing = 0;
+    clearAnimating = false;
+    spawnNext();
+}
+
+static void spawnNext(bool fromHold) {
+    if (!fromHold) {
+        current = nextP;
+        nextP   = spawnPiece(drawNextType());
+        canHold = true;
+    }
+    lockTimer = 0;
+    dropTimer = 0;
+    if (!isValid(current)) {
+        state = GameState::GameOver;
+        if (score > highScore) highScore = score;
+    }
+}
+
+static void doHold() {
+    if (!canHold) return;
+    if (holdT == -1) {
+        holdT  = current.type;
+        spawnNext();
+    } else {
+        int t  = holdT;
+        holdT  = current.type;
+        current = spawnPiece(t);
+        spawnNext(true);
+    }
+    canHold = false;
+}
+
+static void hardDrop() {
+    int dropped = 0;
+    while (tryMove(0, 1)) dropped++;
+    score += dropped * 2;
+    lockPiece();
+}
+
+static void resetGame() {
+    for (int y = 0; y < BOARD_H; y++)
+        for (int x = 0; x < BOARD_W; x++) board[y][x] = 0;
+    score = 0;
+    lines = 0;
+    level = 1;
+    holdT = -1;
+    canHold = true;
+    bag.clear();
+    dropTimer = 0;
+    lockTimer = 0;
+    dasTimer  = 0;
+    dasDir    = 0;
+    clearAnimating = false;
+    numClearing = 0;
+    lastClearCount = 0;
+    lastClearText  = 0;
+    nextP   = spawnPiece(drawNextType());
+    current = spawnPiece(drawNextType());
+    updateDropInterval();
+}
+
+// =================================================================
+// Update
+// =================================================================
+static void updateGame(float dt) {
+    if (clearAnimating) {
+        clearAnimTimer += dt;
+        if (clearAnimTimer >= CLEAR_FLASH) finishLineClear();
+        if (lastClearText > 0) lastClearText -= dt;
+        return;
+    }
+    if (lastClearText > 0) lastClearText -= dt;
+
+    // ---- Horizontal movement with DAS ----
+    if (IsKeyPressed(KEY_LEFT))  { tryMove(-1, 0); dasDir = -1; dasTimer = -DAS_DELAY; }
+    if (IsKeyPressed(KEY_RIGHT)) { tryMove( 1, 0); dasDir =  1; dasTimer = -DAS_DELAY; }
+
+    bool held = (dasDir == -1 && IsKeyDown(KEY_LEFT)) ||
+                (dasDir ==  1 && IsKeyDown(KEY_RIGHT));
+    if (!held) {
+        dasDir = 0;
+    } else {
+        dasTimer += dt;
+        while (dasTimer >= 0.0f) {
+            tryMove(dasDir, 0);
+            dasTimer -= DAS_REPEAT;
+        }
+    }
+
+    // ---- Rotation ----
+    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_X))                          tryRotate( 1);
+    if (IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_LEFT_CONTROL) ||
+        IsKeyPressed(KEY_RIGHT_CONTROL))                                     tryRotate(-1);
+
+    // ---- Soft drop / gravity ----
+    bool soft = IsKeyDown(KEY_DOWN);
+    float effInterval = soft ? std::min(dropInterval, 0.04f) : dropInterval;
+
+    dropTimer += dt;
+    while (dropTimer >= effInterval) {
+        dropTimer -= effInterval;
+        if (!tryMove(0, 1)) break;
+        if (soft) score += 1;
+    }
+
+    // ---- Lock delay when on ground ----
+    Piece below = current;
+    below.y++;
+    bool onGround = !isValid(below);
+    if (onGround) {
+        lockTimer += dt;
+        if (lockTimer >= LOCK_DELAY) lockPiece();
+    } else {
+        lockTimer = 0;
+    }
+
+    // ---- Hard drop ----
+    if (IsKeyPressed(KEY_SPACE)) hardDrop();
+
+    // ---- Hold ----
+    if (IsKeyPressed(KEY_C) || IsKeyPressed(KEY_LEFT_SHIFT) ||
+        IsKeyPressed(KEY_RIGHT_SHIFT)) doHold();
+
+    // ---- Pause ----
+    if (IsKeyPressed(KEY_P) || IsKeyPressed(KEY_ESCAPE)) state = GameState::Paused;
+}
+
+// =================================================================
+// Rendering
+// =================================================================
+static Color lighten(Color c, int by) {
+    c.r = (unsigned char)std::min(255, (int)c.r + by);
+    c.g = (unsigned char)std::min(255, (int)c.g + by);
+    c.b = (unsigned char)std::min(255, (int)c.b + by);
+    return c;
+}
+static Color darken(Color c, float k) {
+    c.r = (unsigned char)((float)c.r * k);
+    c.g = (unsigned char)((float)c.g * k);
+    c.b = (unsigned char)((float)c.b * k);
+    return c;
+}
+
+static void drawCell(int px, int py, int type, float alpha = 1.0f) {
+    Color c = PIECE_COLOR[type];
+    c.a = (unsigned char)(255.0f * alpha);
+
+    DrawRectangle(px, py, CELL, CELL, c);
+
+    Color hl = lighten(c, 70); hl.a = c.a;
+    DrawRectangle(px, py, CELL, 4, hl);
+    DrawRectangle(px, py, 4, CELL, hl);
+
+    Color sh = darken(c, 0.55f); sh.a = c.a;
+    DrawRectangle(px, py + CELL - 4, CELL, 4, sh);
+    DrawRectangle(px + CELL - 4, py, 4, CELL, sh);
+
+    Color border = { 0, 0, 0, (unsigned char)(180 * alpha) };
+    DrawRectangleLines(px, py, CELL, CELL, border);
+}
+
+static void drawGhostCell(int px, int py, int type) {
+    Color c = PIECE_COLOR[type];
+    Color fill = c; fill.a = 40;
+    DrawRectangle(px + 2, py + 2, CELL - 4, CELL - 4, fill);
+    Color border = c; border.a = 140;
+    DrawRectangleLines(px, py, CELL, CELL, border);
+}
+
+static void drawBoard() {
+    DrawRectangle(BOARD_X, BOARD_Y, BOARD_PX_W, BOARD_PX_H, { 12, 12, 20, 255 });
+
+    // empty grid lines
+    for (int y = 0; y < BOARD_H; y++) {
+        for (int x = 0; x < BOARD_W; x++) {
+            if (board[y][x]) {
+                drawCell(BOARD_X + x * CELL, BOARD_Y + y * CELL, board[y][x]);
+            } else {
+                DrawRectangleLines(BOARD_X + x * CELL, BOARD_Y + y * CELL,
+                                   CELL, CELL, { 30, 30, 45, 255 });
+            }
+        }
+    }
+
+    if (clearAnimating) {
+        float t = clearAnimTimer / CLEAR_FLASH;
+        unsigned char a = (unsigned char)(255.0f * (1.0f - t));
+        for (int i = 0; i < numClearing; i++) {
+            int y = clearingLines[i];
+            DrawRectangle(BOARD_X, BOARD_Y + y * CELL, BOARD_PX_W, CELL,
+                          { 255, 255, 255, a });
+        }
+    } else {
+        // Ghost piece
+        int gy = ghostY();
+        if (gy != current.y) {
+            for (int r = 0; r < 4; r++)
+                for (int c = 0; c < 4; c++)
+                    if (cellOf(current, r, c) && gy + r >= 0)
+                        drawGhostCell(BOARD_X + (current.x + c) * CELL,
+                                      BOARD_Y + (gy + r) * CELL,
+                                      current.type + 1);
+        }
+        // Current piece (slightly transparent when in lock-delay window for feedback)
+        float a = 1.0f;
+        Piece below = current; below.y++;
+        if (!isValid(below) && lockTimer > 0) {
+            a = 0.65f + 0.35f * (1.0f - std::min(1.0f, lockTimer / LOCK_DELAY));
+        }
+        for (int r = 0; r < 4; r++)
+            for (int c = 0; c < 4; c++)
+                if (cellOf(current, r, c) && current.y + r >= 0)
+                    drawCell(BOARD_X + (current.x + c) * CELL,
+                             BOARD_Y + (current.y + r) * CELL,
+                             current.type + 1, a);
+    }
+
+    DrawRectangleLinesEx({ (float)BOARD_X - 2, (float)BOARD_Y - 2,
+                           (float)BOARD_PX_W + 4, (float)BOARD_PX_H + 4 }, 2, WHITE);
+}
+
+static void drawPiecePreview(int x, int y, int type, const char* label) {
+    DrawText(label, x, y - 26, 20, WHITE);
+    int boxW = 4 * CELL + 20;
+    int boxH = 4 * CELL + 20;
+    DrawRectangle(x, y, boxW, boxH, { 12, 12, 20, 255 });
+    DrawRectangleLinesEx({ (float)x, (float)y, (float)boxW, (float)boxH }, 2, WHITE);
+    if (type < 0) return;
+
+    int minR = 4, maxR = -1, minC = 4, maxC = -1;
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+            if (PIECES[type][0][r][c]) {
+                minR = std::min(minR, r);
+                maxR = std::max(maxR, r);
+                minC = std::min(minC, c);
+                maxC = std::max(maxC, c);
+            }
+    int pieceW = (maxC - minC + 1) * CELL;
+    int pieceH = (maxR - minR + 1) * CELL;
+    int ox = x + (boxW - pieceW) / 2 - minC * CELL;
+    int oy = y + (boxH - pieceH) / 2 - minR * CELL;
+
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+            if (PIECES[type][0][r][c])
+                drawCell(ox + c * CELL, oy + r * CELL, type + 1);
+}
+
+static void drawHud() {
+    drawPiecePreview(30, 90, holdT, "HOLD");
+    drawPiecePreview(550, 90, nextP.type, "NEXT");
+
+    int sx = 550, sy = 280;
+    DrawText("SCORE", sx, sy, 20, WHITE);
+    DrawText(TextFormat("%d", score), sx, sy + 24, 28, YELLOW);
+
+    DrawText("LEVEL", sx, sy + 76, 20, WHITE);
+    DrawText(TextFormat("%d", level), sx, sy + 100, 28, GREEN);
+
+    DrawText("LINES", sx, sy + 152, 20, WHITE);
+    DrawText(TextFormat("%d", lines), sx, sy + 176, 28, ORANGE);
+
+    DrawText("HIGH",  sx, sy + 228, 20, WHITE);
+    DrawText(TextFormat("%d", highScore), sx, sy + 252, 24,
+             { 255, 180, 180, 255 });
+
+    // Last clear callout.
+    if (lastClearText > 0 && lastClearCount > 0) {
+        const char* tag = "";
+        Color col = YELLOW;
+        switch (lastClearCount) {
+            case 1: tag = "SINGLE";  col = LIGHTGRAY; break;
+            case 2: tag = "DOUBLE";  col = SKYBLUE;   break;
+            case 3: tag = "TRIPLE";  col = ORANGE;    break;
+            case 4: tag = "TETRIS!"; col = RED;       break;
+        }
+        unsigned char a = (unsigned char)(255 * std::min(1.0f, lastClearText));
+        Color c = col; c.a = a;
+        int tw = MeasureText(tag, 30);
+        DrawText(tag, BOARD_X + (BOARD_PX_W - tw) / 2,
+                 BOARD_Y + BOARD_PX_H / 2 - 20, 30, c);
+    }
+
+    // Controls strip.
+    int cx = 30, cy = 360;
+    DrawText("CONTROLS", cx, cy, 18, WHITE);
+    DrawText("Move",     cx, cy + 28, 14, GRAY); DrawText("\xE2\x86\x90 \xE2\x86\x92",     cx + 70, cy + 28, 14, LIGHTGRAY);
+    DrawText("Rotate",   cx, cy + 48, 14, GRAY); DrawText("Up / Z",  cx + 70, cy + 48, 14, LIGHTGRAY);
+    DrawText("Soft",     cx, cy + 68, 14, GRAY); DrawText("Down",    cx + 70, cy + 68, 14, LIGHTGRAY);
+    DrawText("Hard",     cx, cy + 88, 14, GRAY); DrawText("Space",   cx + 70, cy + 88, 14, LIGHTGRAY);
+    DrawText("Hold",     cx, cy +108, 14, GRAY); DrawText("C/Shift", cx + 70, cy +108, 14, LIGHTGRAY);
+    DrawText("Pause",    cx, cy +128, 14, GRAY); DrawText("P/Esc",   cx + 70, cy +128, 14, LIGHTGRAY);
+}
+
+static void drawMenu() {
+    // Animated falling pieces in the background.
+    static float t = 0; t += GetFrameTime();
+    for (int i = 0; i < 8; i++) {
+        float fx = std::fmod((float)(i * 137) + t * 40.0f * (1 + i * 0.1f), (float)WIN_W);
+        float fy = std::fmod((float)(i * 211) + t * 60.0f, (float)WIN_H + 120) - 60.0f;
+        int t1 = (i + (int)(t * 0.3f)) % 7;
+        DrawRectangle((int)fx, (int)fy, CELL, CELL,
+                      { PIECE_COLOR[t1+1].r, PIECE_COLOR[t1+1].g, PIECE_COLOR[t1+1].b, 60 });
+    }
+
+    const char* title = "TETRIS";
+    int titleSize = 96;
+    int tw = MeasureText(title, titleSize);
+    // shadow
+    DrawText(title, (WIN_W - tw) / 2 + 4, 160 + 4, titleSize, { 0, 0, 0, 180 });
+    DrawText(title, (WIN_W - tw) / 2, 160, titleSize, WHITE);
+
+    const char* sub = "Classic C++ Edition";
+    int sw = MeasureText(sub, 22);
+    DrawText(sub, (WIN_W - sw) / 2, 280, 22, GRAY);
+
+    const char* start = "Press ENTER to START";
+    int stw = MeasureText(start, 28);
+    bool blink = ((int)(GetTime() * 2) % 2) == 0;
+    if (blink) DrawText(start, (WIN_W - stw) / 2, 400, 28, YELLOW);
+
+    if (highScore > 0) {
+        const char* hsLabel = TextFormat("HIGH SCORE: %d", highScore);
+        int hsw = MeasureText(hsLabel, 22);
+        DrawText(hsLabel, (WIN_W - hsw) / 2, 470, 22, ORANGE);
+    }
+
+    const char* ctrl1 = "Arrows  Move / Rotate          Space  Hard Drop";
+    const char* ctrl2 = "Z  Counter-rotate          C / Shift  Hold";
+    DrawText(ctrl1, (WIN_W - MeasureText(ctrl1, 18)) / 2, 560, 18, LIGHTGRAY);
+    DrawText(ctrl2, (WIN_W - MeasureText(ctrl2, 18)) / 2, 590, 18, LIGHTGRAY);
+}
+
+static void drawPause() {
+    DrawRectangle(0, 0, WIN_W, WIN_H, { 0, 0, 0, 180 });
+    const char* p = "PAUSED";
+    int pw = MeasureText(p, 64);
+    DrawText(p, (WIN_W - pw) / 2, 280, 64, WHITE);
+
+    const char* r = "Press P or ESC to resume";
+    DrawText(r, (WIN_W - MeasureText(r, 22)) / 2, 370, 22, LIGHTGRAY);
+    const char* q = "Press Q to quit to menu";
+    DrawText(q, (WIN_W - MeasureText(q, 20)) / 2, 405, 20, GRAY);
+}
+
+static void drawGameOver() {
+    DrawRectangle(0, 0, WIN_W, WIN_H, { 0, 0, 0, 190 });
+    const char* g = "GAME OVER";
+    int gw = MeasureText(g, 64);
+    DrawText(g, (WIN_W - gw) / 2 + 3, 220 + 3, 64, { 0, 0, 0, 200 });
+    DrawText(g, (WIN_W - gw) / 2, 220, 64, RED);
+
+    const char* sc = TextFormat("Score: %d", score);
+    DrawText(sc, (WIN_W - MeasureText(sc, 32)) / 2, 320, 32, YELLOW);
+
+    const char* ln = TextFormat("Lines: %d   Level: %d", lines, level);
+    DrawText(ln, (WIN_W - MeasureText(ln, 22)) / 2, 365, 22, LIGHTGRAY);
+
+    if (score == highScore && score > 0) {
+        const char* nh = "NEW HIGH SCORE!";
+        DrawText(nh, (WIN_W - MeasureText(nh, 24)) / 2, 410, 24, ORANGE);
+    }
+
+    bool blink = ((int)(GetTime() * 2) % 2) == 0;
+    const char* r = "Press ENTER to play again";
+    if (blink) DrawText(r, (WIN_W - MeasureText(r, 22)) / 2, 470, 22, WHITE);
+
+    const char* q = "Press Q for menu";
+    DrawText(q, (WIN_W - MeasureText(q, 20)) / 2, 510, 20, GRAY);
+}
+
+// =================================================================
+// Main
+// =================================================================
+static void frame() {
+    float dt = GetFrameTime();
+
+    switch (state) {
+        case GameState::Menu:
+            if (IsKeyPressed(KEY_ENTER)) {
+                resetGame();
+                state = GameState::Playing;
+            }
+            break;
+        case GameState::Playing:
+            updateGame(dt);
+            break;
+        case GameState::Paused:
+            if (IsKeyPressed(KEY_P) || IsKeyPressed(KEY_ESCAPE))
+                state = GameState::Playing;
+            if (IsKeyPressed(KEY_Q)) state = GameState::Menu;
+            break;
+        case GameState::GameOver:
+            if (IsKeyPressed(KEY_ENTER)) {
+                resetGame();
+                state = GameState::Playing;
+            }
+            if (IsKeyPressed(KEY_Q)) state = GameState::Menu;
+            break;
+    }
+
+    BeginDrawing();
+
+    Color bg = STAGE_BG[(level - 1) % 10];
+    ClearBackground(bg);
+    for (int i = 0; i < WIN_W; i += 60)
+        DrawLine(i, 0, i, WIN_H, { 255, 255, 255, 8 });
+    for (int i = 0; i < WIN_H; i += 60)
+        DrawLine(0, i, WIN_W, i, { 255, 255, 255, 8 });
+
+    if (state == GameState::Menu) {
+        drawMenu();
+    } else {
+        drawBoard();
+        drawHud();
+        if (state == GameState::Paused)   drawPause();
+        if (state == GameState::GameOver) drawGameOver();
+    }
+
+    EndDrawing();
+}
+
+int main() {
+    InitWindow(WIN_W, WIN_H, "Tetris");
+    SetExitKey(KEY_NULL);     // ESC is used for pause, not quit
+    SetTargetFPS(60);
+    rng.seed((unsigned)(GetTime() * 1e6) ^ 0xC0FFEEu);
+
+    resetGame();
+    state = GameState::Menu;
+
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop(frame, 0, 1);
+#else
+    while (!WindowShouldClose()) frame();
+    CloseWindow();
+#endif
+    return 0;
+}
