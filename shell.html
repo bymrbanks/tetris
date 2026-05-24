@@ -262,17 +262,20 @@
       <div class="meta" id="submit-meta">—</div>
       <div class="field">
         <label for="submit-name">Your name</label>
+        <!-- readonly at page load defeats Safari/Chrome autofill heuristics
+             (which check readonly state once, on form discovery). Stripped
+             in openSubmitOverlay() before focus. -->
         <input id="submit-name" type="text" maxlength="16"
                autocomplete="off" autocapitalize="characters"
                spellcheck="false" inputmode="text" enterkeyhint="next"
-               placeholder="AAA">
+               placeholder="AAA" readonly>
       </div>
       <div class="field">
         <label for="submit-email">Email</label>
         <input id="submit-email" type="email" maxlength="254"
-               autocomplete="email" autocapitalize="none"
+               autocomplete="off" autocapitalize="none"
                spellcheck="false" inputmode="email" enterkeyhint="send"
-               placeholder="you@example.com">
+               placeholder="you@example.com" readonly>
         <span class="hint">Only needed if you want to win challenge prizes — no spam, promise.</span>
       </div>
       <div class="btn-row">
@@ -509,6 +512,11 @@
 
       const nameInput  = document.getElementById('submit-name');
       const emailInput = document.getElementById('submit-email');
+      // Strip readonly (set in HTML to defeat browser autofill) right before
+      // we hand control to the user. By the time the browser would autofill,
+      // the field is already considered "user-edited".
+      nameInput.removeAttribute('readonly');
+      emailInput.removeAttribute('readonly');
       nameInput.value  = getStoredName();
       emailInput.value = getStoredEmail();
       submitOverlay.classList.add('visible');
