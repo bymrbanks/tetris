@@ -611,7 +611,39 @@ static Color darken(Color c, float k) {
     return c;
 }
 
+// Sprite sheet: 3×3 grid, 1254×1254, each cell 418×418.
+// Loaded in main(); when present, drawCell uses it instead of the procedural look.
+static Texture2D cellSheet = {0};
+static const Rectangle CELL_SPRITE[8] = {
+    {   0,   0,   0,   0 },   // 0 = empty (unused)
+    {   0,   0, 418, 418 },   // 1 = I  cyan
+    { 418,   0, 418, 418 },   // 2 = O  yellow
+    { 836,   0, 418, 418 },   // 3 = T  purple
+    {   0, 418, 418, 418 },   // 4 = S  green
+    { 418, 418, 418, 418 },   // 5 = Z  red
+    { 836, 418, 418, 418 },   // 6 = J  blue
+    { 418, 836, 418, 418 },   // 7 = L  orange
+};
+
 static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL) {
+    // Sprite path — used in production. Renders slightly larger than the
+    // cell so the candy bodies visually touch instead of leaving glow gaps
+    // between adjacent piece cells.
+    if (cellSheet.id > 0 && type >= 1 && type <= 7) {
+        Color tint = WHITE;
+        tint.a = (unsigned char)(255.0f * alpha);
+        const float bleed = (float)sz * 0.18f;     // overdraw to absorb the source's transparent margin
+        Rectangle dst = {
+            (float)px - bleed * 0.5f,
+            (float)py - bleed * 0.5f,
+            (float)sz + bleed,
+            (float)sz + bleed
+        };
+        DrawTexturePro(cellSheet, CELL_SPRITE[type], dst, {0, 0}, 0.0f, tint);
+        return;
+    }
+
+    // Fallback: procedural candy rendering (used if the sprite ever fails to load).
     Color base = PIECE_COLOR[type];
     base.a = (unsigned char)(255.0f * alpha);
 
@@ -1070,6 +1102,12 @@ int main() {
     SetExitKey(KEY_NULL);     // ESC is used for pause, not quit
     SetTargetFPS(60);
     rng.seed((unsigned)(GetTime() * 1e6) ^ 0xC0FFEEu);
+
+    // Sprite sheet — sits beside the binary on native, bundled into the WASM
+    // virtual FS via emcc --preload-file on web. If absent, drawCell falls
+    // back to its procedural look.
+    cellSheet = LoadTexture("sprites/cells.png");
+    if (cellSheet.id > 0) SetTextureFilter(cellSheet, TEXTURE_FILTER_BILINEAR);
 
     resetGame();
     state = GameState::Menu;

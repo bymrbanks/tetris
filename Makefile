@@ -93,9 +93,11 @@ $(BUILD_DIR)/main.o: main.cpp
 	@mkdir -p $(BUILD_DIR)
 	$(EMCC) $(EMCC_COMMON) -std=c++17 -c main.cpp -o $@
 
-$(WEB_DIR)/index.html: $(BUILD_DIR)/main.o $(RAYLIB_OBJS) shell.html
+$(WEB_DIR)/index.html: $(BUILD_DIR)/main.o $(RAYLIB_OBJS) shell.html sprites/cells.png
 	@mkdir -p $(WEB_DIR)
-	$(EMCC) -o $@ $(BUILD_DIR)/main.o $(RAYLIB_OBJS) $(EMCC_COMMON) $(EMCC_LINK) --shell-file shell.html
+	$(EMCC) -o $@ $(BUILD_DIR)/main.o $(RAYLIB_OBJS) $(EMCC_COMMON) $(EMCC_LINK) \
+	    --preload-file sprites/cells.png \
+	    --shell-file shell.html
 
 serve: web
 	@echo "Serving on http://localhost:8000"
