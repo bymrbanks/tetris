@@ -141,6 +141,11 @@
       color: #fff;
       font-family: inherit;
       -webkit-appearance: none; appearance: none;
+      /* html/body has user-select:none for the canvas; opt inputs back in
+         so caret placement, double-tap-to-select, and the system text-edit
+         menu (Copy/Paste/Select All) all work. */
+      -webkit-user-select: text;
+      user-select: text;
     }
     .panel input[type="text"]  { letter-spacing: 2px; text-transform: uppercase; }
     .panel input[type="email"] { letter-spacing: 0; }
@@ -151,6 +156,19 @@
       background: rgba(255,255,255,0.10);
     }
     .panel input::placeholder { color: #555; letter-spacing: 1px; }
+    /* Defeat the browser's native autofill background + dark text.
+       The 1000px inset box-shadow paints over the autofill fill color
+       (no other way to override it), text-fill-color forces our white,
+       and the 5000s transition delay defers the yellow-flash entirely. */
+    .panel input:-webkit-autofill,
+    .panel input:-webkit-autofill:hover,
+    .panel input:-webkit-autofill:focus,
+    .panel input:-webkit-autofill:active {
+      -webkit-text-fill-color: #fff;
+      -webkit-box-shadow: 0 0 0 1000px rgba(28, 24, 48, 1) inset;
+      caret-color: #fff;
+      transition: background-color 5000s ease-in-out 0s;
+    }
 
     .panel .btn-row { display: flex; gap: 10px; margin-top: 24px; }
     .panel .btn {
@@ -651,7 +669,13 @@
     }
 
     // ---------- Desktop niceties ----------
+    // Prevent page scroll on arrow keys / space — but ONLY when the user
+    // isn't typing in a form field. Otherwise this would swallow spaces
+    // in the name input and block arrow-key cursor movement.
     window.addEventListener('keydown', e => {
+      const t = e.target;
+      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (typing) return;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].indexOf(e.key) !== -1) {
         e.preventDefault();
       }
