@@ -317,10 +317,16 @@
     // document for gameplay key polling and calls preventDefault on many
     // keys (Backspace, Tab, Arrows, Space). Without intervention, typing in
     // the score-submit form would lose backspace, arrow keys, and spaces.
-    // We install capture-phase listeners BEFORE the emscripten module loads
-    // (<script async type="text/javascript" src="index.js"></script> is at the bottom of this file) and stopImmediatePropagation
+    // We install capture-phase listeners BEFORE the emcc loader script
+    // (which lives at the bottom of this file) and stopImmediatePropagation
     // when the event target is a text input — so emscripten's listener never
     // sees the event but the browser's native text-edit behavior proceeds.
+    //
+    // CAUTION: do NOT write the emcc placeholder token (three curly braces
+    // around SCRIPT) anywhere in this file — emcc does a textual substitution
+    // that injects the loader's full script tag, and the literal </script>
+    // inside that injection terminates this inline script early. That kills
+    // the Module setup below, which breaks canvas init.
     (function() {
       const isTyping = (t) => t && (
         t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
