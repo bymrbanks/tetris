@@ -494,22 +494,114 @@ static Color darken(Color c, float k) {
 }
 
 static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL) {
-    Color c = PIECE_COLOR[type];
-    c.a = (unsigned char)(255.0f * alpha);
+    Color base = PIECE_COLOR[type];
+    base.a = (unsigned char)(255.0f * alpha);
 
-    DrawRectangle(px, py, sz, sz, c);
+    const float fsz       = (float)sz;
+    const float roundness = 0.28f;                  // ~28% of sz -> candy-like corners
+    const int   segments  = 8;                      // smoothness of rounded corners
+    const int   shadowOff = std::max(1, sz / 12);   // drop shadow offset, scales with sz
 
-    int edge = std::max(2, sz / 8);   // bevel thickness scales with cell
-    Color hl = lighten(c, 70); hl.a = c.a;
-    DrawRectangle(px, py, sz, edge, hl);
-    DrawRectangle(px, py, edge, sz, hl);
+    // --------------------------------------------------------------
+    // 1) Soft drop shadow (slightly offset down/right, dark, low alpha)
+    // --------------------------------------------------------------
+    {
+        Rectangle sr = { (float)(px + shadowOff), (float)(py + shadowOff), fsz, fsz };
+        Color shadow = { 0, 0, 0, (unsigned char)(90.0f * alpha) };
+        DrawRectangleRounded(sr, roundness, segments, shadow);
+    }
 
-    Color sh = darken(c, 0.55f); sh.a = c.a;
-    DrawRectangle(px, py + sz - edge, sz, edge, sh);
-    DrawRectangle(px + sz - edge, py, edge, sz, sh);
+    // --------------------------------------------------------------
+    // 2) Rounded body in the piece color
+    // --------------------------------------------------------------
+    Rectangle body = { (float)px, (float)py, fsz, fsz };
+    DrawRectangleRounded(body, roundness, segments, base);
 
-    Color border = { 0, 0, 0, (unsigned char)(180 * alpha) };
-    DrawRectangleLines(px, py, sz, sz, border);
+    // --------------------------------------------------------------
+    // 3) Darker gradient wash on the bottom half (candy curve / depth)
+    //    Inset slightly so the gradient stays inside the rounded body.
+    // --------------------------------------------------------------
+    {
+        int inset = std::max(1, sz / 16);
+        int gx = px + inset;
+        int gy = py + sz / 2;
+        int gw = sz - 2 * inset;
+        int gh = sz / 2 - inset;
+        Color top = { 0, 0, 0, 0 };                                       // transparent
+        Color bot = darken(base, 0.55f);
+        bot.a = (unsigned char)(140.0f * alpha);                          // gentle darken
+        DrawRectangleGradientV(gx, gy, gw, gh, top, bot);
+    }
+
+    // --------------------------------------------------------------
+    // 4) Soft lighter wash on the top half (overall glossy bias)
+    //    Helps the body read as 3D before the specular highlight.
+    // --------------------------------------------------------------
+    {
+        int inset = std::max(1, sz / 16);
+        int gx = px + inset;
+        int gy = py + inset;
+        int gw = sz - 2 * inset;
+        int gh = sz / 2 - inset;
+        Color top = lighten(base, 60);
+        top.a = (unsigned char)(110.0f * alpha);
+        Color bot = { 255, 255, 255, 0 };                                 // transparent
+        DrawRectangleGradientV(gx, gy, gw, gh, top, bot);
+    }
+
+    // --------------------------------------------------------------
+    // 5) Bright rim light along the very top edge
+    // --------------------------------------------------------------
+    {
+        int rimInset = std::max(2, sz / 8);
+        int ry = py + std::max(1, sz / 20);
+        int rh = std::max(1, sz / 14);
+        Color rim = lighten(base, 110);
+        rim.a = (unsigned char)(170.0f * alpha);
+        DrawRectangle(px + rimInset, ry, sz - 2 * rimInset, rh, rim);
+    }
+
+    // --------------------------------------------------------------
+    // 6) Specular highlight ellipse near the top-left.
+    //    Stack a couple of ellipses with decreasing alpha + growing
+    //    radius to fake a soft blur without per-pixel work.
+    // --------------------------------------------------------------
+    {
+        int hx = px + sz / 4;
+        int hy = py + sz / 4;
+        int hrx = std::max(2, sz / 5);
+        int hry = std::max(1, sz / 9);
+        // Outer soft glow
+        Color glow = { 255, 255, 255, (unsigned char)(40.0f * alpha) };
+        DrawEllipse(hx, hy, (float)(hrx + sz / 14), (float)(hry + sz / 18), glow);
+        // Mid layer
+        Color mid = { 255, 255, 255, (unsigned char)(90.0f * alpha) };
+        DrawEllipse(hx, hy, (float)hrx, (float)hry, mid);
+        // Bright core
+        Color core = { 255, 255, 255, (unsigned char)(170.0f * alpha) };
+        int crx = std::max(1, hrx * 2 / 3);
+        int cry = std::max(1, hry * 2 / 3);
+        DrawEllipse(hx, hy, (float)crx, (float)cry, core);
+    }
+
+    // --------------------------------------------------------------
+    // 7) Subtle outer rim light along the rounded outline
+    //    (just inside the dark outline, for that polished edge).
+    // --------------------------------------------------------------
+    {
+        Color innerRim = lighten(base, 90);
+        innerRim.a = (unsigned char)(110.0f * alpha);
+        DrawRectangleRoundedLines(body, roundness, segments, innerRim);
+    }
+
+    // --------------------------------------------------------------
+    // 8) Final crisp dark outline so cells pop against the background
+    // --------------------------------------------------------------
+    {
+        Color border = { 0, 0, 0, (unsigned char)(190.0f * alpha) };
+        Rectangle ob = { (float)px - 0.5f, (float)py - 0.5f, fsz + 1.0f, fsz + 1.0f };
+        DrawRectangleRoundedLines(ob, roundness, segments, border);
+    }
 }
 
 static void drawGhostCell(int px, int py, int type) {
