@@ -311,6 +311,33 @@
 
   <script>
     'use strict';
+
+    // ----- Keep keystrokes inside form inputs out of the WASM ------------
+    // raylib's emscripten runtime attaches keydown/keyup listeners to the
+    // document for gameplay key polling and calls preventDefault on many
+    // keys (Backspace, Tab, Arrows, Space). Without intervention, typing in
+    // the score-submit form would lose backspace, arrow keys, and spaces.
+    // We install capture-phase listeners BEFORE the emscripten module loads
+    // ({{{ SCRIPT }}} is at the bottom of this file) and stopImmediatePropagation
+    // when the event target is a text input — so emscripten's listener never
+    // sees the event but the browser's native text-edit behavior proceeds.
+    (function() {
+      const isTyping = (t) => t && (
+        t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
+      );
+      const shield = (e) => {
+        if (isTyping(e.target)) {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
+      };
+      ['keydown', 'keyup', 'keypress'].forEach(evt => {
+        window.addEventListener(evt, shield, true);     // capture phase, window
+        document.addEventListener(evt, shield, true);   // capture phase, document
+      });
+    })();
+    // ---------------------------------------------------------------------
+
     const TA = { LEFT: 0, RIGHT: 1, SOFT: 2, HARD: 3, ROTATE: 4, HOLD: 5, START: 6, PAUSE: 7 };
     const STATE = { MENU: 0, PLAYING: 1, PAUSED: 2, GAMEOVER: 3 };
 
