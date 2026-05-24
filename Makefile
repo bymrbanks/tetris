@@ -78,7 +78,8 @@ EMCC_LINK := \
 	-s TOTAL_MEMORY=67108864      \
 	-s FORCE_FILESYSTEM=1         \
 	-s EXPORTED_FUNCTIONS=_main,_touchDown,_touchUp,_getGameState,_getScore,_getLines,_getLevel,_getDurationMs,_setHighScore \
-	-s EXPORTED_RUNTIME_METHODS=ccall,cwrap
+	-s EXPORTED_RUNTIME_METHODS=ccall,cwrap \
+	-s MINIFY_HTML=0
 
 BUILD_DIR   := build
 RAYLIB_OBJS := $(patsubst $(RAYLIB_SRC)/%.c,$(BUILD_DIR)/%.o,$(RAYLIB_C_FILES))
