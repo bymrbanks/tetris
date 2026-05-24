@@ -37,16 +37,16 @@ enum TouchAction {
     TA_ROTATE, TA_HOLD, TA_START, TA_PAUSE, TA_COUNT
 };
 static bool g_tkDown[TA_COUNT]    = {false};
-static bool g_tkPressed[TA_COUNT] = {false}; // edge: set on transition, cleared after frame
+static int  g_tkPressed[TA_COUNT] = {0};   // counter, so fast swipes can queue N presses per frame
 
-static inline bool tkPressed(int a) { return g_tkPressed[a]; }
+static inline bool tkPressed(int a) { return g_tkPressed[a] > 0; }
 static inline bool tkDown(int a)    { return g_tkDown[a]; }
 
 #ifdef __EMSCRIPTEN__
 extern "C" {
 EMSCRIPTEN_KEEPALIVE void touchDown(int a) {
     if (a >= 0 && a < TA_COUNT) {
-        if (!g_tkDown[a]) g_tkPressed[a] = true;
+        if (!g_tkDown[a]) g_tkPressed[a]++;   // edge → queue one press
         g_tkDown[a] = true;
     }
 }
@@ -54,6 +54,7 @@ EMSCRIPTEN_KEEPALIVE void touchUp(int a) {
     if (a >= 0 && a < TA_COUNT) g_tkDown[a] = false;
 }
 } // extern "C"
+// (Leaderboard getters live further down, after the static game state.)
 #endif
 
 // =================================================================
@@ -64,10 +65,12 @@ constexpr int BOARD_H = 20;
 constexpr int CELL    = 30;
 constexpr int BOARD_PX_W = BOARD_W * CELL;
 constexpr int BOARD_PX_H = BOARD_H * CELL;
-constexpr int BOARD_X = 210;
-constexpr int BOARD_Y = 50;
-constexpr int WIN_W   = 720;
-constexpr int WIN_H   = 720;
+constexpr int WIN_W   = 480;                              // portrait — mobile-first
+constexpr int WIN_H   = 800;
+constexpr int BOARD_X = (WIN_W - BOARD_PX_W) / 2;         // 90 → board horizontally centered
+constexpr int BOARD_Y = 140;                              // 140 → leaves 130px top bar
+constexpr int HUD_TOP_Y    = 10;                          // top bar (HOLD / SCORE / NEXT)
+constexpr int HUD_BOTTOM_Y = BOARD_Y + BOARD_PX_H + 12;   // 752 → strip below board
 
 constexpr float DAS_DELAY   = 0.16f;   // delayed auto-shift initial wait
 constexpr float DAS_REPEAT  = 0.04f;   // shift repeat interval
@@ -172,6 +175,19 @@ static int        lines = 0;
 static int        level = 1;
 static int        highScore = 0;
 static GameState  state = GameState::Menu;
+static double     gameStartTime = 0.0;   // GetTime() at last resetGame(); used for duration export
+
+#ifdef __EMSCRIPTEN__
+extern "C" {
+// Read-only getters for the leaderboard overlay (JS polls these).
+EMSCRIPTEN_KEEPALIVE int  getGameState()   { return (int)state; }
+EMSCRIPTEN_KEEPALIVE int  getScore()       { return score; }
+EMSCRIPTEN_KEEPALIVE int  getLines()       { return lines; }
+EMSCRIPTEN_KEEPALIVE int  getLevel()       { return level; }
+EMSCRIPTEN_KEEPALIVE long getDurationMs()  { return (long)((GetTime() - gameStartTime) * 1000.0); }
+EMSCRIPTEN_KEEPALIVE void setHighScore(int v) { if (v > highScore) highScore = v; }
+} // extern "C"
+#endif
 static float      dropTimer = 0.0f;
 static float      dropInterval = 1.0f;
 static float      lockTimer = 0.0f;
@@ -388,6 +404,7 @@ static void resetGame() {
     nextP   = spawnPiece(drawNextType());
     current = spawnPiece(drawNextType());
     updateDropInterval();
+    gameStartTime = GetTime();   // for getDurationMs() export
 }
 
 // =================================================================
@@ -402,12 +419,16 @@ static void updateGame(float dt) {
     }
     if (lastClearText > 0) lastClearText -= dt;
 
-    // ---- Horizontal movement with DAS ----
-    if (IsKeyPressed(KEY_LEFT)  || tkPressed(TA_LEFT))  { tryMove(-1, 0); dasDir = -1; dasTimer = -DAS_DELAY; }
-    if (IsKeyPressed(KEY_RIGHT) || tkPressed(TA_RIGHT)) { tryMove( 1, 0); dasDir =  1; dasTimer = -DAS_DELAY; }
+    // ---- Touch horizontal pulses (drain everything queued by JS this frame) ----
+    while (g_tkPressed[TA_LEFT]  > 0) { tryMove(-1, 0); g_tkPressed[TA_LEFT]--;  }
+    while (g_tkPressed[TA_RIGHT] > 0) { tryMove( 1, 0); g_tkPressed[TA_RIGHT]--; }
 
-    bool held = (dasDir == -1 && (IsKeyDown(KEY_LEFT)  || tkDown(TA_LEFT))) ||
-                (dasDir ==  1 && (IsKeyDown(KEY_RIGHT) || tkDown(TA_RIGHT)));
+    // ---- Keyboard horizontal with DAS ----
+    if (IsKeyPressed(KEY_LEFT))  { tryMove(-1, 0); dasDir = -1; dasTimer = -DAS_DELAY; }
+    if (IsKeyPressed(KEY_RIGHT)) { tryMove( 1, 0); dasDir =  1; dasTimer = -DAS_DELAY; }
+
+    bool held = (dasDir == -1 && IsKeyDown(KEY_LEFT)) ||
+                (dasDir ==  1 && IsKeyDown(KEY_RIGHT));
     if (!held) {
         dasDir = 0;
     } else {
@@ -472,22 +493,23 @@ static Color darken(Color c, float k) {
     return c;
 }
 
-static void drawCell(int px, int py, int type, float alpha = 1.0f) {
+static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL) {
     Color c = PIECE_COLOR[type];
     c.a = (unsigned char)(255.0f * alpha);
 
-    DrawRectangle(px, py, CELL, CELL, c);
+    DrawRectangle(px, py, sz, sz, c);
 
+    int edge = std::max(2, sz / 8);   // bevel thickness scales with cell
     Color hl = lighten(c, 70); hl.a = c.a;
-    DrawRectangle(px, py, CELL, 4, hl);
-    DrawRectangle(px, py, 4, CELL, hl);
+    DrawRectangle(px, py, sz, edge, hl);
+    DrawRectangle(px, py, edge, sz, hl);
 
     Color sh = darken(c, 0.55f); sh.a = c.a;
-    DrawRectangle(px, py + CELL - 4, CELL, 4, sh);
-    DrawRectangle(px + CELL - 4, py, 4, CELL, sh);
+    DrawRectangle(px, py + sz - edge, sz, edge, sh);
+    DrawRectangle(px + sz - edge, py, edge, sz, sh);
 
     Color border = { 0, 0, 0, (unsigned char)(180 * alpha) };
-    DrawRectangleLines(px, py, CELL, CELL, border);
+    DrawRectangleLines(px, py, sz, sz, border);
 }
 
 static void drawGhostCell(int px, int py, int type) {
@@ -550,10 +572,11 @@ static void drawBoard() {
                            (float)BOARD_PX_W + 4, (float)BOARD_PX_H + 4 }, 2, WHITE);
 }
 
-static void drawPiecePreview(int x, int y, int type, const char* label) {
-    DrawText(label, x, y - 26, 20, WHITE);
-    int boxW = 4 * CELL + 20;
-    int boxH = 4 * CELL + 20;
+static void drawPiecePreview(int x, int y, int type, const char* label, int cellPx = CELL) {
+    int labelSize = (cellPx >= 24) ? 20 : 14;
+    DrawText(label, x, y - (labelSize + 4), labelSize, WHITE);
+    int boxW = 4 * cellPx + 16;
+    int boxH = 4 * cellPx + 16;
     DrawRectangle(x, y, boxW, boxH, { 12, 12, 20, 255 });
     DrawRectangleLinesEx({ (float)x, (float)y, (float)boxW, (float)boxH }, 2, WHITE);
     if (type < 0) return;
@@ -567,36 +590,38 @@ static void drawPiecePreview(int x, int y, int type, const char* label) {
                 minC = std::min(minC, c);
                 maxC = std::max(maxC, c);
             }
-    int pieceW = (maxC - minC + 1) * CELL;
-    int pieceH = (maxR - minR + 1) * CELL;
-    int ox = x + (boxW - pieceW) / 2 - minC * CELL;
-    int oy = y + (boxH - pieceH) / 2 - minR * CELL;
+    int pieceW = (maxC - minC + 1) * cellPx;
+    int pieceH = (maxR - minR + 1) * cellPx;
+    int ox = x + (boxW - pieceW) / 2 - minC * cellPx;
+    int oy = y + (boxH - pieceH) / 2 - minR * cellPx;
 
     for (int r = 0; r < 4; r++)
         for (int c = 0; c < 4; c++)
             if (PIECES[type][0][r][c])
-                drawCell(ox + c * CELL, oy + r * CELL, type + 1);
+                drawCell(ox + c * cellPx, oy + r * cellPx, type + 1, 1.0f, cellPx);
 }
 
 static void drawHud() {
-    drawPiecePreview(30, 90, holdT, "HOLD");
-    drawPiecePreview(550, 90, nextP.type, "NEXT");
+    // ---- Top bar (HUD_TOP_Y .. ~130): HOLD on left, SCORE centered, NEXT on right ----
+    constexpr int HUD_CELL = 18;
+    int boxW = 4 * HUD_CELL + 16;            // 88
+    int holdX = 15;
+    int previewY = HUD_TOP_Y + 22;           // leaves space for label above
+    int nextX = WIN_W - 15 - boxW;
 
-    int sx = 550, sy = 280;
-    DrawText("SCORE", sx, sy, 20, WHITE);
-    DrawText(TextFormat("%d", score), sx, sy + 24, 28, YELLOW);
+    drawPiecePreview(holdX, previewY, holdT,      "HOLD", HUD_CELL);
+    drawPiecePreview(nextX, previewY, nextP.type, "NEXT", HUD_CELL);
 
-    DrawText("LEVEL", sx, sy + 76, 20, WHITE);
-    DrawText(TextFormat("%d", level), sx, sy + 100, 28, GREEN);
+    // SCORE big in the center of the top bar
+    const char* scoreStr = TextFormat("%d", score);
+    int scoreSize = 36;
+    int scoreW = MeasureText(scoreStr, scoreSize);
+    DrawText(scoreStr, (WIN_W - scoreW) / 2, HUD_TOP_Y + 30, scoreSize, YELLOW);
+    const char* scoreLabel = "SCORE";
+    int slw = MeasureText(scoreLabel, 12);
+    DrawText(scoreLabel, (WIN_W - slw) / 2, HUD_TOP_Y + 14, 12, GRAY);
 
-    DrawText("LINES", sx, sy + 152, 20, WHITE);
-    DrawText(TextFormat("%d", lines), sx, sy + 176, 28, ORANGE);
-
-    DrawText("HIGH",  sx, sy + 228, 20, WHITE);
-    DrawText(TextFormat("%d", highScore), sx, sy + 252, 24,
-             { 255, 180, 180, 255 });
-
-    // Last clear callout.
+    // ---- Last clear callout (centered over board) ----
     if (lastClearText > 0 && lastClearCount > 0) {
         const char* tag = "";
         Color col = YELLOW;
@@ -613,15 +638,17 @@ static void drawHud() {
                  BOARD_Y + BOARD_PX_H / 2 - 20, 30, c);
     }
 
-    // Controls strip.
-    int cx = 30, cy = 360;
-    DrawText("CONTROLS", cx, cy, 18, WHITE);
-    DrawText("Move",     cx, cy + 28, 14, GRAY); DrawText("\xE2\x86\x90 \xE2\x86\x92",     cx + 70, cy + 28, 14, LIGHTGRAY);
-    DrawText("Rotate",   cx, cy + 48, 14, GRAY); DrawText("Up / Z",  cx + 70, cy + 48, 14, LIGHTGRAY);
-    DrawText("Soft",     cx, cy + 68, 14, GRAY); DrawText("Down",    cx + 70, cy + 68, 14, LIGHTGRAY);
-    DrawText("Hard",     cx, cy + 88, 14, GRAY); DrawText("Space",   cx + 70, cy + 88, 14, LIGHTGRAY);
-    DrawText("Hold",     cx, cy +108, 14, GRAY); DrawText("C/Shift", cx + 70, cy +108, 14, LIGHTGRAY);
-    DrawText("Pause",    cx, cy +128, 14, GRAY); DrawText("P/Esc",   cx + 70, cy +128, 14, LIGHTGRAY);
+    // ---- Bottom strip: LV · LINES · HIGH ----
+    int by = HUD_BOTTOM_Y;
+    int fs = 20;
+    const char* lvS    = TextFormat("LV %d",    level);
+    const char* linesS = TextFormat("LINES %d", lines);
+    const char* highS  = TextFormat("HIGH %d",  highScore);
+    DrawText(lvS, 20, by, fs, GREEN);
+    int lw = MeasureText(linesS, fs);
+    DrawText(linesS, (WIN_W - lw) / 2, by, fs, ORANGE);
+    int hw = MeasureText(highS, fs);
+    DrawText(highS, WIN_W - 20 - hw, by, fs, { 255, 180, 180, 255 });
 }
 
 static void drawMenu() {
@@ -646,21 +673,30 @@ static void drawMenu() {
     int sw = MeasureText(sub, 22);
     DrawText(sub, (WIN_W - sw) / 2, 280, 22, GRAY);
 
+#ifdef __EMSCRIPTEN__
+    const char* start = "TAP to START";
+#else
     const char* start = "Press ENTER to START";
+#endif
     int stw = MeasureText(start, 28);
     bool blink = ((int)(GetTime() * 2) % 2) == 0;
-    if (blink) DrawText(start, (WIN_W - stw) / 2, 400, 28, YELLOW);
+    if (blink) DrawText(start, (WIN_W - stw) / 2, 430, 28, YELLOW);
 
     if (highScore > 0) {
         const char* hsLabel = TextFormat("HIGH SCORE: %d", highScore);
         int hsw = MeasureText(hsLabel, 22);
-        DrawText(hsLabel, (WIN_W - hsw) / 2, 470, 22, ORANGE);
+        DrawText(hsLabel, (WIN_W - hsw) / 2, 510, 22, ORANGE);
     }
 
-    const char* ctrl1 = "Arrows  Move / Rotate          Space  Hard Drop";
-    const char* ctrl2 = "Z  Counter-rotate          C / Shift  Hold";
-    DrawText(ctrl1, (WIN_W - MeasureText(ctrl1, 18)) / 2, 560, 18, LIGHTGRAY);
-    DrawText(ctrl2, (WIN_W - MeasureText(ctrl2, 18)) / 2, 590, 18, LIGHTGRAY);
+#ifdef __EMSCRIPTEN__
+    const char* ctrl1 = "Swipe to move  \xC2\xB7  Tap to rotate";
+    const char* ctrl2 = "Flick down to drop  \xC2\xB7  Swipe up to hold";
+#else
+    const char* ctrl1 = "Arrows: Move / Rotate    Space: Hard Drop";
+    const char* ctrl2 = "Z: Counter-rotate    C/Shift: Hold";
+#endif
+    DrawText(ctrl1, (WIN_W - MeasureText(ctrl1, 16)) / 2, 620, 16, LIGHTGRAY);
+    DrawText(ctrl2, (WIN_W - MeasureText(ctrl2, 16)) / 2, 645, 16, LIGHTGRAY);
 }
 
 static void drawPause() {
@@ -694,11 +730,17 @@ static void drawGameOver() {
     }
 
     bool blink = ((int)(GetTime() * 2) % 2) == 0;
+#ifdef __EMSCRIPTEN__
+    const char* r = "TAP to play again";
+#else
     const char* r = "Press ENTER to play again";
-    if (blink) DrawText(r, (WIN_W - MeasureText(r, 22)) / 2, 470, 22, WHITE);
+#endif
+    if (blink) DrawText(r, (WIN_W - MeasureText(r, 22)) / 2, 480, 22, WHITE);
 
+#ifndef __EMSCRIPTEN__
     const char* q = "Press Q for menu";
-    DrawText(q, (WIN_W - MeasureText(q, 20)) / 2, 510, 20, GRAY);
+    DrawText(q, (WIN_W - MeasureText(q, 20)) / 2, 520, 20, GRAY);
+#endif
 }
 
 // =================================================================
@@ -752,8 +794,8 @@ static void frame() {
 
     EndDrawing();
 
-    // Clear edge-triggered touch flags after this frame consumed them.
-    for (int i = 0; i < TA_COUNT; i++) g_tkPressed[i] = false;
+    // Clear edge-triggered touch counters after this frame consumed them.
+    for (int i = 0; i < TA_COUNT; i++) g_tkPressed[i] = 0;
 }
 
 int main() {

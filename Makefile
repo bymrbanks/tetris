@@ -77,7 +77,7 @@ EMCC_LINK := \
 	-s ALLOW_MEMORY_GROWTH=1      \
 	-s TOTAL_MEMORY=67108864      \
 	-s FORCE_FILESYSTEM=1         \
-	-s EXPORTED_FUNCTIONS=_main,_touchDown,_touchUp \
+	-s EXPORTED_FUNCTIONS=_main,_touchDown,_touchUp,_getGameState,_getScore,_getLines,_getLevel,_getDurationMs,_setHighScore \
 	-s EXPORTED_RUNTIME_METHODS=ccall,cwrap
 
 BUILD_DIR   := build

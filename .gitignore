@@ -18,3 +18,8 @@ raylib/
 .DS_Store
 .claude/
 .vercel
+
+# Node + local env
+node_modules/
+.env.local
+.env*.local
