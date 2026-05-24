@@ -58,6 +58,30 @@ EMSCRIPTEN_KEEPALIVE void touchUp(int a) {
 #endif
 
 // =================================================================
+// Easing helpers — t in [0,1]; back/elastic may overshoot [0,1].
+// =================================================================
+static inline float easeOutBack(float t) {
+    const float c1 = 1.70158f;
+    const float c3 = c1 + 1.0f;
+    return 1.0f + c3 * std::pow(t - 1.0f, 3.0f) + c1 * std::pow(t - 1.0f, 2.0f);
+}
+
+[[maybe_unused]] static inline float easeOutElastic(float t) {
+    const float c4 = (2.0f * 3.14159265358979323846f) / 3.0f;
+    if (t <= 0.0f) return 0.0f;
+    if (t >= 1.0f) return 1.0f;
+    return std::pow(2.0f, -10.0f * t) * std::sin((t * 10.0f - 0.75f) * c4) + 1.0f;
+}
+
+[[maybe_unused]] static inline float easeOutCubic(float t) {
+    return 1.0f - std::pow(1.0f - t, 3.0f);
+}
+
+[[maybe_unused]] static inline float easeInOutQuad(float t) {
+    return t < 0.5f ? 2.0f * t * t : 1.0f - std::pow(-2.0f * t + 2.0f, 2.0f) / 2.0f;
+}
+
+// =================================================================
 // Constants
 // =================================================================
 constexpr int BOARD_W = 10;
@@ -199,9 +223,67 @@ static int        clearingLines[4];
 static int        numClearing = 0;
 static int        lastClearCount = 0;
 static float      lastClearText = 0.0f;
+static int        softDropPending = 0;   // accumulated soft-drop points awaiting popup
 
 static std::mt19937       rng;
 static std::vector<int>   bag;
+
+// ---- Juice / animation state (purely visual; never affects tick logic) ----
+static float  lockTime[BOARD_H][BOARD_W] = {{0}};   // GetTime() when each cell was locked; -1 = never
+static double spawnTime  = -1.0;                    // GetTime() when `current` was last (re)spawned
+static double shakeStart = -1.0;                    // GetTime() when screen-shake started
+static float  shakeMag   = 0.0f;                    // peak shake magnitude in pixels
+
+struct ScorePopup { float x, y; int value; double bornAt; bool active; };
+static ScorePopup popups[16] = {};
+
+static void spawnPopup(int x, int y, int value) {
+    if (value <= 0) return;
+    for (int i = 0; i < 16; i++) {
+        if (!popups[i].active) {
+            popups[i].x      = (float)x;
+            popups[i].y      = (float)y;
+            popups[i].value  = value;
+            popups[i].bornAt = GetTime();
+            popups[i].active = true;
+            return;
+        }
+    }
+    // No free slot — overwrite the oldest popup so newer scores stay visible.
+    int oldest = 0;
+    for (int i = 1; i < 16; i++) {
+        if (popups[i].bornAt < popups[oldest].bornAt) oldest = i;
+    }
+    popups[oldest].x      = (float)x;
+    popups[oldest].y      = (float)y;
+    popups[oldest].value  = value;
+    popups[oldest].bornAt = GetTime();
+    popups[oldest].active = true;
+}
+
+static void drawPopups() {
+    double now = GetTime();
+    for (int i = 0; i < 16; i++) {
+        if (!popups[i].active) continue;
+        double elapsed = now - popups[i].bornAt;
+        if (elapsed >= 0.8) { popups[i].active = false; continue; }
+        float t = (float)(elapsed / 0.8);
+        float yOff = (float)(elapsed * 60.0);
+        unsigned char a = (unsigned char)(255.0f * std::max(0.0f, 1.0f - t));
+        int fontSize = (popups[i].value >= 500) ? 28
+                      : (popups[i].value >= 100) ? 24 : 22;
+        Color col = (popups[i].value >= 500) ? ORANGE : YELLOW;
+        col.a = a;
+        const char* txt = TextFormat("+%d", popups[i].value);
+        int tw = MeasureText(txt, fontSize);
+        // Subtle shadow for legibility on bright cells.
+        Color sh = { 0, 0, 0, a };
+        DrawText(txt, (int)popups[i].x - tw / 2 + 1,
+                 (int)(popups[i].y - yOff) + 1, fontSize, sh);
+        DrawText(txt, (int)popups[i].x - tw / 2,
+                 (int)(popups[i].y - yOff), fontSize, col);
+    }
+}
 
 // =================================================================
 // Utilities
@@ -293,6 +375,7 @@ static void spawnNext(bool fromHold = false);
 
 static void lockPiece() {
     // Stamp piece onto board.
+    double now = GetTime();
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 4; c++) {
             if (!cellOf(current, r, c)) continue;
@@ -300,8 +383,16 @@ static void lockPiece() {
             int bx = current.x + c;
             if (by >= 0 && by < BOARD_H && bx >= 0 && bx < BOARD_W) {
                 board[by][bx] = current.type + 1;
+                lockTime[by][bx] = (float)now;   // juice: per-cell pop timer
             }
         }
+    }
+
+    // Flush accumulated soft-drop points as a single floating "+N".
+    if (softDropPending > 0) {
+        spawnPopup(BOARD_X + current.x * CELL + 2 * CELL,
+                   BOARD_Y + current.y * CELL + 2 * CELL, softDropPending);
+        softDropPending = 0;
     }
 
     // Find full rows.
@@ -314,6 +405,12 @@ static void lockPiece() {
         if (full) clearingLines[numClearing++] = y;
     }
 
+    // Screen-shake on a Tetris (4-line clear).
+    if (numClearing == 4) {
+        shakeStart = now;
+        shakeMag   = 8.0f;
+    }
+
     if (numClearing > 0) {
         clearAnimating = true;
         clearAnimTimer = 0.0f;
@@ -324,7 +421,12 @@ static void lockPiece() {
 
 static void finishLineClear() {
     static const int LINE_SCORE[5] = { 0, 100, 300, 500, 800 };
-    score += LINE_SCORE[numClearing] * level;
+    int delta = LINE_SCORE[numClearing] * level;
+    score += delta;
+    // Floating "+N" centered over the cleared rows.
+    int midRow = clearingLines[numClearing / 2];
+    spawnPopup(BOARD_X + BOARD_PX_W / 2,
+               BOARD_Y + midRow * CELL + CELL / 2, delta);
     lines += numClearing;
     lastClearCount = numClearing;
     lastClearText  = 1.5f;
@@ -357,6 +459,7 @@ static void spawnNext(bool fromHold) {
     }
     lockTimer = 0;
     dropTimer = 0;
+    spawnTime = GetTime();   // juice: trigger pop-in animation
     if (!isValid(current)) {
         state = GameState::GameOver;
         if (score > highScore) highScore = score;
@@ -380,13 +483,22 @@ static void doHold() {
 static void hardDrop() {
     int dropped = 0;
     while (tryMove(0, 1)) dropped++;
-    score += dropped * 2;
+    int delta = dropped * 2;
+    score += delta;
+    // Floating "+N" centered on the piece's resting position.
+    if (delta > 0) {
+        spawnPopup(BOARD_X + current.x * CELL + 2 * CELL,
+                   BOARD_Y + current.y * CELL + 2 * CELL, delta);
+    }
     lockPiece();
 }
 
 static void resetGame() {
     for (int y = 0; y < BOARD_H; y++)
         for (int x = 0; x < BOARD_W; x++) board[y][x] = 0;
+    // Sentinel -1 keeps the pop animation from firing on a fresh board.
+    for (int y = 0; y < BOARD_H; y++)
+        for (int x = 0; x < BOARD_W; x++) lockTime[y][x] = -1.0f;
     score = 0;
     lines = 0;
     level = 1;
@@ -401,6 +513,12 @@ static void resetGame() {
     numClearing = 0;
     lastClearCount = 0;
     lastClearText  = 0;
+    softDropPending = 0;
+    // Reset all juice/animation state.
+    spawnTime  = -1.0;
+    shakeStart = -1.0;
+    shakeMag   = 0.0f;
+    for (int i = 0; i < 16; i++) popups[i].active = false;
     nextP   = spawnPiece(drawNextType());
     current = spawnPiece(drawNextType());
     updateDropInterval();
@@ -452,7 +570,7 @@ static void updateGame(float dt) {
     while (dropTimer >= effInterval) {
         dropTimer -= effInterval;
         if (!tryMove(0, 1)) break;
-        if (soft) score += 1;
+        if (soft) { score += 1; softDropPending += 1; }
     }
 
     // ---- Lock delay when on ground ----
@@ -615,11 +733,28 @@ static void drawGhostCell(int px, int py, int type) {
 static void drawBoard() {
     DrawRectangle(BOARD_X, BOARD_Y, BOARD_PX_W, BOARD_PX_H, { 12, 12, 20, 255 });
 
-    // empty grid lines
+    // empty grid lines + locked cells (with per-cell "pop" bounce on freshly-locked tiles)
+    double now = GetTime();
     for (int y = 0; y < BOARD_H; y++) {
         for (int x = 0; x < BOARD_W; x++) {
             if (board[y][x]) {
-                drawCell(BOARD_X + x * CELL, BOARD_Y + y * CELL, board[y][x]);
+                int px = BOARD_X + x * CELL;
+                int py = BOARD_Y + y * CELL;
+                float lt = lockTime[y][x];
+                float elapsed = (lt >= 0.0f) ? (float)(now - lt) : 1.0f;
+                if (elapsed >= 0.0f && elapsed < 0.15f) {
+                    float t = elapsed / 0.15f;
+                    // easeOutBack overshoots ~10% — map 0..1 → 1.0..1.12..1.0
+                    // by using the back curve as a pulse around 1.0.
+                    float overshoot = easeOutBack(t);   // 0 → 1 with overshoot
+                    // Pulse: scale grows up to 1.12 around t=0.5, settles to 1.0 at t=1.
+                    float pulse = 1.0f + 0.12f * (1.0f - std::pow(2.0f * t - 1.0f, 2.0f)) * overshoot;
+                    int sz = (int)std::round((float)CELL * pulse);
+                    int off = (sz - CELL) / 2;
+                    drawCell(px - off, py - off, board[y][x], 1.0f, sz);
+                } else {
+                    drawCell(px, py, board[y][x]);
+                }
             } else {
                 DrawRectangleLines(BOARD_X + x * CELL, BOARD_Y + y * CELL,
                                    CELL, CELL, { 30, 30, 45, 255 });
@@ -652,12 +787,28 @@ static void drawBoard() {
         if (!isValid(below) && lockTimer > 0) {
             a = 0.65f + 0.35f * (1.0f - std::min(1.0f, lockTimer / LOCK_DELAY));
         }
+        // Spawn-in pop: scale 0.4 → 1.0 over 120ms using easeOutBack.
+        float spawnElapsed = (spawnTime >= 0.0) ? (float)(GetTime() - spawnTime) : 1.0f;
+        bool popping = (spawnElapsed >= 0.0f && spawnElapsed < 0.12f);
+        float spawnScale = 1.0f;
+        if (popping) {
+            float st = spawnElapsed / 0.12f;
+            spawnScale = 0.4f + 0.6f * easeOutBack(st);
+        }
         for (int r = 0; r < 4; r++)
             for (int c = 0; c < 4; c++)
-                if (cellOf(current, r, c) && current.y + r >= 0)
-                    drawCell(BOARD_X + (current.x + c) * CELL,
-                             BOARD_Y + (current.y + r) * CELL,
-                             current.type + 1, a);
+                if (cellOf(current, r, c) && current.y + r >= 0) {
+                    int basePx = BOARD_X + (current.x + c) * CELL;
+                    int basePy = BOARD_Y + (current.y + r) * CELL;
+                    if (popping) {
+                        int sz  = (int)std::round((float)CELL * spawnScale);
+                        int off = (CELL - sz) / 2;
+                        drawCell(basePx + off, basePy + off,
+                                 current.type + 1, a, sz);
+                    } else {
+                        drawCell(basePx, basePy, current.type + 1, a);
+                    }
+                }
     }
 
     DrawRectangleLinesEx({ (float)BOARD_X - 2, (float)BOARD_Y - 2,
@@ -741,6 +892,9 @@ static void drawHud() {
     DrawText(linesS, (WIN_W - lw) / 2, by, fs, ORANGE);
     int hw = MeasureText(highS, fs);
     DrawText(highS, WIN_W - 20 - hw, by, fs, { 255, 180, 180, 255 });
+
+    // Floating "+N" score popups drawn on top of the board/HUD.
+    drawPopups();
 }
 
 static void drawMenu() {
@@ -878,8 +1032,29 @@ static void frame() {
     if (state == GameState::Menu) {
         drawMenu();
     } else {
+        // Screen-shake: ~200ms decaying jitter applied via Camera2D so
+        // ALL gameplay draws are offset uniformly. Overlays (pause/game-over)
+        // stay outside the camera so they read cleanly.
+        float shakeOffX = 0.0f, shakeOffY = 0.0f;
+        bool shaking = false;
+        if (shakeStart >= 0.0) {
+            float t = (float)((GetTime() - shakeStart) / 0.20);
+            if (t < 1.0f) {
+                shaking = true;
+                float mag = shakeMag * (1.0f - t);
+                shakeOffX = ((float)GetRandomValue(-1000, 1000) / 1000.0f) * mag;
+                shakeOffY = ((float)GetRandomValue(-1000, 1000) / 1000.0f) * mag;
+            }
+        }
+        Camera2D cam = {};
+        cam.target   = { -shakeOffX, -shakeOffY };
+        cam.offset   = { 0.0f, 0.0f };
+        cam.rotation = 0.0f;
+        cam.zoom     = 1.0f;
+        if (shaking) BeginMode2D(cam);
         drawBoard();
         drawHud();
+        if (shaking) EndMode2D();
         if (state == GameState::Paused)   drawPause();
         if (state == GameState::GameOver) drawGameOver();
     }
