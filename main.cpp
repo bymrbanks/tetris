@@ -616,28 +616,28 @@ static Color darken(Color c, float k) {
     return c;
 }
 
-// Single 7×10 sprite sheet (sprites/cell_sprites.png):
-//   row = piece type - 1 (I, O, T, S, Z, J, L)
-//   col = animation frame (0 = intact, 1-4 = crack→burst, 5-9 = unused drift/empty)
-// Loaded in main(). drawCell defaults to frame 0; line-clear animation passes 1..4.
+// Single-row 8-frame animation sheet (sprites/cell_sprites.png):
+//   col = animation frame (0 = intact, 1-4 = crack→burst, 5-7 = drift)
+// The source is max-channel-grayscale, so multiplicative tint with
+// PIECE_COLOR[type] recolors each frame to the matching piece hue
+// while preserving the shading. Loaded in main().
 static Texture2D animSheet = {};
-static const float SHEET_COLS    = 10.0f;
-static const float SHEET_ROWS    = 7.0f;
-static const float SHEET_W       = 1280.0f;
-static const float SHEET_H       = 1280.0f;
-static const float SHEET_CELL_W  = SHEET_W / SHEET_COLS;   // 128
-static const float SHEET_CELL_H  = SHEET_H / SHEET_ROWS;   // 182.857...
+static const float SHEET_COLS    = 8.0f;
+static const float SHEET_ROWS    = 1.0f;
+static const float SHEET_W       = 1648.0f;
+static const float SHEET_H       = 208.0f;
+static const float SHEET_CELL_W  = SHEET_W / SHEET_COLS;   // 206
+static const float SHEET_CELL_H  = SHEET_H / SHEET_ROWS;   // 208
 
 static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL, int frame = 0) {
-    // Sprite path. Renders slightly larger than the cell so candy bodies
-    // visually touch through their small transparent margins.
     if (animSheet.id > 0 && type >= 1 && type <= 7 && frame >= 0 && frame < (int)SHEET_COLS) {
-        Color tint = WHITE;
+        // Multiplicative tint: gray source × piece color = piece-colored candy.
+        Color tint = PIECE_COLOR[type];
         tint.a = (unsigned char)(255.0f * alpha);
         const float bleed = (float)sz * 0.05f;
         Rectangle src = {
             (float)frame * SHEET_CELL_W,
-            (float)(type - 1) * SHEET_CELL_H,
+            0.0f,
             SHEET_CELL_W,
             SHEET_CELL_H
         };
