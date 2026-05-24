@@ -616,48 +616,37 @@ static Color darken(Color c, float k) {
     return c;
 }
 
-// 8-frame animation sheet (sprites/cell_sprites.png), stacked vertically:
-//   ROW 0  (y = 0..207)   — tintable body (grayscale of cyan content)
-//   ROW 1  (y = 208..415) — white highlight overlay (alpha-keyed)
-// Each row is 8 frames wide: col 0 intact, cols 1-4 crack → burst, 5-7 drift.
-// Decomposition is done offline in Python; see the regen note in sprites/.
-// drawCell does two passes per cell: tinted body, then white highlight on top.
+// Pre-colored 8-frame × 7-row animation sheet (sprites/cell_sprite_full.png).
+// Each row is a different piece color baked in; col index = animation frame
+// (0 = intact, 1-4 = crack → burst, 5-7 = drift). Maps piece type → sheet row.
 static Texture2D animSheet = {};
 static const float SHEET_COLS    = 8.0f;
-static const float SHEET_W       = 1648.0f;
-static const float SHEET_CELL_W  = SHEET_W / SHEET_COLS;   // 206 per frame
-static const float SHEET_CELL_H  = 208.0f;                 // per row; full sheet is 2 rows tall
+static const float SHEET_CELL_W  = 103.0f;
+static const float SHEET_CELL_H  = 104.0f;
+
+// piece type (1..7)  →  row in cell_sprite_full.png
+// Sheet rows top→bottom: cyan, green, orange, yellow, purple, blue, red
+// Piece types:           1(I=cyan) 2(O=yel) 3(T=pur) 4(S=grn) 5(Z=red) 6(J=blu) 7(L=org)
+static const int SHEET_ROW[8] = { -1, 0, 3, 4, 1, 6, 5, 2 };
 
 static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL, int frame = 0) {
     if (animSheet.id > 0 && type >= 1 && type <= 7 && frame >= 0 && frame < (int)SHEET_COLS) {
+        Color tint = WHITE;
+        tint.a = (unsigned char)(255.0f * alpha);
         const float bleed = (float)sz * 0.05f;
+        Rectangle src = {
+            (float)frame * SHEET_CELL_W,
+            (float)SHEET_ROW[type] * SHEET_CELL_H,
+            SHEET_CELL_W,
+            SHEET_CELL_H
+        };
         Rectangle dst = {
             (float)px - bleed * 0.5f,
             (float)py - bleed * 0.5f,
             (float)sz + bleed,
             (float)sz + bleed
         };
-        Rectangle srcBody = {
-            (float)frame * SHEET_CELL_W,
-            0.0f,
-            SHEET_CELL_W,
-            SHEET_CELL_H
-        };
-        Rectangle srcHL = {
-            srcBody.x,
-            SHEET_CELL_H,    // second row
-            SHEET_CELL_W,
-            SHEET_CELL_H
-        };
-        // Pass 1: tinted body (grayscale × piece color = piece-colored candy).
-        Color bodyTint = PIECE_COLOR[type];
-        bodyTint.a = (unsigned char)(255.0f * alpha);
-        DrawTexturePro(animSheet, srcBody, dst, {0, 0}, 0.0f, bodyTint);
-
-        // Pass 2: white specular highlight on top, alpha-blended.
-        Color hlTint = WHITE;
-        hlTint.a = (unsigned char)(255.0f * alpha);
-        DrawTexturePro(animSheet, srcHL, dst, {0, 0}, 0.0f, hlTint);
+        DrawTexturePro(animSheet, src, dst, {0, 0}, 0.0f, tint);
         return;
     }
 
@@ -1150,7 +1139,7 @@ int main() {
     // Animation sheet — single 7×10 sprite sheet. Row = piece type-1, col 0
     // is the intact candy used during normal gameplay; cols 1..4 play during
     // line-clear (crack → burst). Mipmaps + trilinear give crisp downsampling.
-    animSheet = LoadTexture("sprites/cell_sprites.png");
+    animSheet = LoadTexture("sprites/cell_sprite_full.png");
     if (animSheet.id > 0) {
         GenTextureMipmaps(&animSheet);
         SetTextureFilter(animSheet, TEXTURE_FILTER_TRILINEAR);

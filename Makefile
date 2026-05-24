@@ -93,7 +93,7 @@ $(BUILD_DIR)/main.o: main.cpp
 	@mkdir -p $(BUILD_DIR)
 	$(EMCC) $(EMCC_COMMON) -std=c++17 -c main.cpp -o $@
 
-SPRITES := sprites/cell_sprites.png
+SPRITES := sprites/cell_sprite_full.png
 
 $(WEB_DIR)/index.html: $(BUILD_DIR)/main.o $(RAYLIB_OBJS) shell.html $(SPRITES)
 	@mkdir -p $(WEB_DIR)
