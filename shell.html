@@ -2,31 +2,81 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0e0c1c">
   <title>Tetris</title>
   <style>
     html, body {
-      margin: 0; padding: 0; height: 100%;
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
       background: radial-gradient(circle at 50% 30%, #2a2440 0%, #0e0c1c 70%);
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
       color: #e8e8e8;
       -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+      overscroll-behavior: none;
     }
-    body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+    #app {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      width: 100%; height: 100dvh; height: 100vh;
+      gap: 14px; padding: 8px;
+      box-sizing: border-box;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
     #canvas-wrap {
       box-shadow: 0 12px 60px rgba(0, 0, 0, 0.65);
-      border-radius: 10px;
-      overflow: hidden;
-      line-height: 0;
+      border-radius: 10px; overflow: hidden; line-height: 0;
     }
     canvas {
       display: block;
-      width: 92vmin; height: 92vmin;
+      width: min(92vmin, 75vh); height: min(92vmin, 75vh);
       outline: none; background: #14101e;
       image-rendering: pixelated;
+      touch-action: none;
     }
-    #status { font-size: 12px; color: #888; letter-spacing: 0.3px; height: 14px; }
+
+    /* Touch controls: hidden by default, shown on touch / narrow screens */
+    #touch-controls {
+      display: none;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      width: min(92vmin, 360px);
+    }
+    .tk {
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.08);
+      color: #e8e8e8;
+      font: 600 22px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+      height: 58px; border-radius: 12px;
+      cursor: pointer;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.1s, transform 0.04s;
+      padding: 0;
+    }
+    .tk.small { font-size: 14px; letter-spacing: 0.5px; }
+    .tk:active, .tk.held {
+      background: rgba(255, 255, 255, 0.22);
+      transform: scale(0.96);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+
+    @media (hover: none) and (pointer: coarse), (max-width: 768px) {
+      #touch-controls { display: grid; }
+      canvas {
+        width: min(95vmin, 58vh);
+        height: min(95vmin, 58vh);
+      }
+      #footer { display: none; }
+    }
+
+    #status { font-size: 12px; color: #888; height: 14px; letter-spacing: 0.3px; }
     #loader { width: 220px; height: 3px; background: #2a2638; border-radius: 2px; overflow: hidden; }
     #loader > div {
       height: 100%; width: 0%;
@@ -39,18 +89,31 @@
   </style>
 </head>
 <body>
-  <div id="canvas-wrap">
-    <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+  <div id="app">
+    <div id="canvas-wrap">
+      <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+    </div>
+
+    <div id="touch-controls" role="group" aria-label="Touch controls">
+      <button class="tk" data-action="0" aria-label="Move left">◀</button>
+      <button class="tk" data-action="4" aria-label="Rotate">↻</button>
+      <button class="tk" data-action="1" aria-label="Move right">▶</button>
+      <button class="tk" data-action="2" aria-label="Soft drop">▼</button>
+      <button class="tk small" data-action="5" aria-label="Hold piece">HOLD</button>
+      <button class="tk" data-action="3" aria-label="Hard drop">⤓</button>
+    </div>
+
+    <div id="status">Loading…</div>
+    <div id="loader"><div></div></div>
   </div>
-  <div id="status">Loading…</div>
-  <div id="loader"><div></div></div>
   <div id="footer">C++ · raylib · WebAssembly &nbsp;·&nbsp; <a href="https://github.com/bymrbanks/tetris">source</a></div>
 
   <script>
-    var statusEl = document.getElementById('status');
-    var loaderBar = document.querySelector('#loader > div');
-    var loaderEl = document.getElementById('loader');
-    var canvas = document.getElementById('canvas');
+    const TA = { LEFT: 0, RIGHT: 1, SOFT: 2, HARD: 3, ROTATE: 4, HOLD: 5, START: 6, PAUSE: 7 };
+    const statusEl = document.getElementById('status');
+    const loaderBar = document.querySelector('#loader > div');
+    const loaderEl = document.getElementById('loader');
+    const canvas = document.getElementById('canvas');
 
     var Module = {
       canvas: canvas,
@@ -65,22 +128,66 @@
         }
         statusEl.textContent = text;
         var m = text.match(/([\d.]+)\/([\d.]+)/);
-        if (m) {
-          loaderBar.style.width = (parseFloat(m[1]) / parseFloat(m[2]) * 100) + '%';
-        }
+        if (m) loaderBar.style.width = (parseFloat(m[1]) / parseFloat(m[2]) * 100) + '%';
       },
       totalDependencies: 0,
       monitorRunDependencies: function(left) {
         this.totalDependencies = Math.max(this.totalDependencies, left);
+      },
+      onRuntimeInitialized: function() {
+        wireTouchInputs();
       }
     };
 
-    canvas.addEventListener('click', function() { canvas.focus(); });
-    window.addEventListener('keydown', function(e) {
+    function safeCall(fnName, arg) {
+      const fn = Module['_' + fnName];
+      if (typeof fn === 'function') fn(arg);
+    }
+
+    function wireTouchInputs() {
+      // Wire each touch button: pointerdown → touchDown(action), release → touchUp.
+      // C++ side derives both edge ("pressed") and level ("down") from these.
+      document.querySelectorAll('.tk').forEach(btn => {
+        const action = parseInt(btn.dataset.action, 10);
+        let active = false;
+        const press = e => {
+          e.preventDefault();
+          if (active) return;
+          active = true;
+          btn.classList.add('held');
+          safeCall('touchDown', action);
+        };
+        const release = e => {
+          if (!active) return;
+          active = false;
+          btn.classList.remove('held');
+          safeCall('touchUp', action);
+        };
+        btn.addEventListener('pointerdown', press);
+        btn.addEventListener('pointerup', release);
+        btn.addEventListener('pointercancel', release);
+        btn.addEventListener('pointerleave', release);
+        // Prevent accidental zoom on double-tap
+        btn.addEventListener('dblclick', e => e.preventDefault());
+      });
+
+      // Tap on canvas → ENTER (start in Menu, restart in GameOver, resume in Paused).
+      // Safe during Playing: the game ignores ENTER there.
+      canvas.addEventListener('pointerdown', e => {
+        safeCall('touchDown', TA.START);
+        setTimeout(() => safeCall('touchUp', TA.START), 30);
+      });
+    }
+
+    // Keep keyboard input working on desktop (focus + prevent page scroll on arrows/space).
+    canvas.addEventListener('click', () => canvas.focus());
+    window.addEventListener('keydown', e => {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].indexOf(e.key) !== -1) {
         e.preventDefault();
       }
     });
+    // Stop iOS pinch-zoom on the game area
+    document.addEventListener('gesturestart', e => e.preventDefault());
   </script>
   {{{ SCRIPT }}}
 </body>

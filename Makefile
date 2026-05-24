@@ -76,7 +76,9 @@ EMCC_LINK := \
 	-s ASYNCIFY                   \
 	-s ALLOW_MEMORY_GROWTH=1      \
 	-s TOTAL_MEMORY=67108864      \
-	-s FORCE_FILESYSTEM=1
+	-s FORCE_FILESYSTEM=1         \
+	-s EXPORTED_FUNCTIONS=_main,_touchDown,_touchUp \
+	-s EXPORTED_RUNTIME_METHODS=ccall,cwrap
 
 BUILD_DIR   := build
 RAYLIB_OBJS := $(patsubst $(RAYLIB_SRC)/%.c,$(BUILD_DIR)/%.o,$(RAYLIB_C_FILES))

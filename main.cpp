@@ -3,7 +3,7 @@
 // Build:  make
 // Run:    make run     (or ./tetris)
 //
-// Controls:
+// Controls (keyboard):
 //   Left / Right  - move
 //   Down          - soft drop
 //   Up / X        - rotate clockwise
@@ -13,6 +13,9 @@
 //   P / Esc       - pause
 //   Enter         - start / restart
 //   Q             - quit to menu (from pause/game-over)
+//
+// On the web build, the same actions are wired to on-screen touch
+// buttons via the touchDown/touchUp JS bridge below.
 
 #include "raylib.h"
 #include <algorithm>
@@ -22,6 +25,35 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
+#endif
+
+// =================================================================
+// Touch input bridge (for mobile / web)
+// JS calls touchDown(action) / touchUp(action). Native build never
+// sets these flags, so behaviour is unchanged off the web.
+// =================================================================
+enum TouchAction {
+    TA_LEFT = 0, TA_RIGHT, TA_SOFT, TA_HARD,
+    TA_ROTATE, TA_HOLD, TA_START, TA_PAUSE, TA_COUNT
+};
+static bool g_tkDown[TA_COUNT]    = {false};
+static bool g_tkPressed[TA_COUNT] = {false}; // edge: set on transition, cleared after frame
+
+static inline bool tkPressed(int a) { return g_tkPressed[a]; }
+static inline bool tkDown(int a)    { return g_tkDown[a]; }
+
+#ifdef __EMSCRIPTEN__
+extern "C" {
+EMSCRIPTEN_KEEPALIVE void touchDown(int a) {
+    if (a >= 0 && a < TA_COUNT) {
+        if (!g_tkDown[a]) g_tkPressed[a] = true;
+        g_tkDown[a] = true;
+    }
+}
+EMSCRIPTEN_KEEPALIVE void touchUp(int a) {
+    if (a >= 0 && a < TA_COUNT) g_tkDown[a] = false;
+}
+} // extern "C"
 #endif
 
 // =================================================================
@@ -371,11 +403,11 @@ static void updateGame(float dt) {
     if (lastClearText > 0) lastClearText -= dt;
 
     // ---- Horizontal movement with DAS ----
-    if (IsKeyPressed(KEY_LEFT))  { tryMove(-1, 0); dasDir = -1; dasTimer = -DAS_DELAY; }
-    if (IsKeyPressed(KEY_RIGHT)) { tryMove( 1, 0); dasDir =  1; dasTimer = -DAS_DELAY; }
+    if (IsKeyPressed(KEY_LEFT)  || tkPressed(TA_LEFT))  { tryMove(-1, 0); dasDir = -1; dasTimer = -DAS_DELAY; }
+    if (IsKeyPressed(KEY_RIGHT) || tkPressed(TA_RIGHT)) { tryMove( 1, 0); dasDir =  1; dasTimer = -DAS_DELAY; }
 
-    bool held = (dasDir == -1 && IsKeyDown(KEY_LEFT)) ||
-                (dasDir ==  1 && IsKeyDown(KEY_RIGHT));
+    bool held = (dasDir == -1 && (IsKeyDown(KEY_LEFT)  || tkDown(TA_LEFT))) ||
+                (dasDir ==  1 && (IsKeyDown(KEY_RIGHT) || tkDown(TA_RIGHT)));
     if (!held) {
         dasDir = 0;
     } else {
@@ -387,12 +419,12 @@ static void updateGame(float dt) {
     }
 
     // ---- Rotation ----
-    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_X))                          tryRotate( 1);
+    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_X) || tkPressed(TA_ROTATE))  tryRotate( 1);
     if (IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_LEFT_CONTROL) ||
         IsKeyPressed(KEY_RIGHT_CONTROL))                                     tryRotate(-1);
 
     // ---- Soft drop / gravity ----
-    bool soft = IsKeyDown(KEY_DOWN);
+    bool soft = IsKeyDown(KEY_DOWN) || tkDown(TA_SOFT);
     float effInterval = soft ? std::min(dropInterval, 0.04f) : dropInterval;
 
     dropTimer += dt;
@@ -414,14 +446,14 @@ static void updateGame(float dt) {
     }
 
     // ---- Hard drop ----
-    if (IsKeyPressed(KEY_SPACE)) hardDrop();
+    if (IsKeyPressed(KEY_SPACE) || tkPressed(TA_HARD)) hardDrop();
 
     // ---- Hold ----
     if (IsKeyPressed(KEY_C) || IsKeyPressed(KEY_LEFT_SHIFT) ||
-        IsKeyPressed(KEY_RIGHT_SHIFT)) doHold();
+        IsKeyPressed(KEY_RIGHT_SHIFT) || tkPressed(TA_HOLD)) doHold();
 
     // ---- Pause ----
-    if (IsKeyPressed(KEY_P) || IsKeyPressed(KEY_ESCAPE)) state = GameState::Paused;
+    if (IsKeyPressed(KEY_P) || IsKeyPressed(KEY_ESCAPE) || tkPressed(TA_PAUSE)) state = GameState::Paused;
 }
 
 // =================================================================
@@ -677,7 +709,7 @@ static void frame() {
 
     switch (state) {
         case GameState::Menu:
-            if (IsKeyPressed(KEY_ENTER)) {
+            if (IsKeyPressed(KEY_ENTER) || tkPressed(TA_START)) {
                 resetGame();
                 state = GameState::Playing;
             }
@@ -686,12 +718,13 @@ static void frame() {
             updateGame(dt);
             break;
         case GameState::Paused:
-            if (IsKeyPressed(KEY_P) || IsKeyPressed(KEY_ESCAPE))
+            if (IsKeyPressed(KEY_P) || IsKeyPressed(KEY_ESCAPE) ||
+                tkPressed(TA_PAUSE) || tkPressed(TA_START))
                 state = GameState::Playing;
             if (IsKeyPressed(KEY_Q)) state = GameState::Menu;
             break;
         case GameState::GameOver:
-            if (IsKeyPressed(KEY_ENTER)) {
+            if (IsKeyPressed(KEY_ENTER) || tkPressed(TA_START)) {
                 resetGame();
                 state = GameState::Playing;
             }
@@ -718,6 +751,9 @@ static void frame() {
     }
 
     EndDrawing();
+
+    // Clear edge-triggered touch flags after this frame consumed them.
+    for (int i = 0; i < TA_COUNT; i++) g_tkPressed[i] = false;
 }
 
 int main() {
