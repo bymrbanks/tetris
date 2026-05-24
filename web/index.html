@@ -322,11 +322,15 @@
     // when the event target is a text input — so emscripten's listener never
     // sees the event but the browser's native text-edit behavior proceeds.
     //
-    // CAUTION: do NOT write the emcc placeholder token (three curly braces
-    // around SCRIPT) anywhere in this file — emcc does a textual substitution
-    // that injects the loader's full script tag, and the literal </script>
-    // inside that injection terminates this inline script early. That kills
-    // the Module setup below, which breaks canvas init.
+    // CAUTION: do NOT write either of these character sequences anywhere
+    // in this inline script — not even inside a JS comment:
+    //   1. The emcc placeholder token (three braces around SCRIPT) — emcc
+    //      does a textual substitution that injects the loader script tag.
+    //   2. A literal closing-script tag (less-than, slash, s-c-r-i-p-t,
+    //      greater-than) — the HTML parser does not understand JS comments
+    //      and will terminate this script element on the first one it sees.
+    // Either one truncates the inline script, killing the Module setup
+    // below and crashing canvas init.
     (function() {
       const isTyping = (t) => t && (
         t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
