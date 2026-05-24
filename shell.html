@@ -129,8 +129,11 @@
       margin-top: 8px;
       line-height: 1.4;
     }
-    .panel input[type="text"],
-    .panel input[type="email"] {
+    /* Use a structural selector (.panel .field input) instead of input[type=...]
+       because emcc's shell-file minifier strips type="text" — the default
+       value — from the built HTML, leaving CSS attribute selectors like
+       input[type="text"] unmatched on the name input. */
+    .panel .field input {
       width: 100%; box-sizing: border-box;
       padding: 16px 18px;
       font-size: 19px;         /* keep ≥16px so iOS doesn't auto-zoom */
@@ -147,23 +150,25 @@
       -webkit-user-select: text;
       user-select: text;
     }
-    .panel input[type="text"]  { letter-spacing: 2px; text-transform: uppercase; }
-    .panel input[type="email"] { letter-spacing: 0; }
-    .panel input:focus {
+    /* Match the name input (no type attr after minification = default "text")
+       and the email input separately for per-field tracking. */
+    .panel .field input:not([type="email"]) { letter-spacing: 2px; text-transform: uppercase; }
+    .panel .field input[type="email"]       { letter-spacing: 0; }
+    .panel .field input:focus {
       outline: none;
       border-color: rgba(74,214,255,0.85);
       box-shadow: 0 0 0 3px rgba(74,214,255,0.18);
       background: rgba(255,255,255,0.10);
     }
-    .panel input::placeholder { color: #555; letter-spacing: 1px; }
+    .panel .field input::placeholder { color: #555; letter-spacing: 1px; }
     /* Defeat the browser's native autofill background + dark text.
        The 1000px inset box-shadow paints over the autofill fill color
        (no other way to override it), text-fill-color forces our white,
        and the 5000s transition delay defers the yellow-flash entirely. */
-    .panel input:-webkit-autofill,
-    .panel input:-webkit-autofill:hover,
-    .panel input:-webkit-autofill:focus,
-    .panel input:-webkit-autofill:active {
+    .panel .field input:-webkit-autofill,
+    .panel .field input:-webkit-autofill:hover,
+    .panel .field input:-webkit-autofill:focus,
+    .panel .field input:-webkit-autofill:active {
       -webkit-text-fill-color: #fff;
       -webkit-box-shadow: 0 0 0 1000px rgba(28, 24, 48, 1) inset;
       caret-color: #fff;
