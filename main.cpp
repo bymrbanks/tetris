@@ -89,8 +89,13 @@ constexpr int BOARD_H = 20;
 constexpr int CELL    = 30;
 constexpr int BOARD_PX_W = BOARD_W * CELL;
 constexpr int BOARD_PX_H = BOARD_H * CELL;
-constexpr int WIN_W   = 480;                              // portrait — mobile-first
+constexpr int WIN_W   = 480;                              // portrait — mobile-first (logical units)
 constexpr int WIN_H   = 800;
+constexpr int RENDER_SCALE = 2;                           // framebuffer is RENDER_SCALE × logical;
+                                                          // the browser then downscales, which is
+                                                          // sharper than upscaling. Every draw call
+                                                          // still uses logical (480×800) coords —
+                                                          // a Camera2D in frame() applies the zoom.
 constexpr int BOARD_X = (WIN_W - BOARD_PX_W) / 2;         // 90 → board horizontally centered
 constexpr int BOARD_Y = 140;                              // 140 → leaves 130px top bar
 constexpr int HUD_TOP_Y    = 10;                          // top bar (HOLD / SCORE / NEXT)
@@ -622,8 +627,14 @@ static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL
     if (type >= 1 && type <= 7 && cellTex[type].id > 0) {
         Color tint = WHITE;
         tint.a = (unsigned char)(255.0f * alpha);
+        const float bleed = (float)sz * 0.05f;     // mild overdraw so adjacent cells visually touch
         Rectangle src = { 0, 0, (float)cellTex[type].width, (float)cellTex[type].height };
-        Rectangle dst = { (float)px, (float)py, (float)sz, (float)sz };
+        Rectangle dst = {
+            (float)px - bleed * 0.5f,
+            (float)py - bleed * 0.5f,
+            (float)sz + bleed,
+            (float)sz + bleed
+        };
         DrawTexturePro(cellTex[type], src, dst, {0, 0}, 0.0f, tint);
         return;
     }
@@ -1041,6 +1052,26 @@ static void frame() {
 
     Color bg = STAGE_BG[(level - 1) % 10];
     ClearBackground(bg);
+
+    // One Camera2D does double duty: (1) zoom = RENDER_SCALE upscales every
+    // logical draw to fill the framebuffer at RENDER_SCALE × resolution,
+    // (2) optional shake jitter on a Tetris clear.
+    float shakeOffX = 0.0f, shakeOffY = 0.0f;
+    if (shakeStart >= 0.0) {
+        float t = (float)((GetTime() - shakeStart) / 0.20);
+        if (t < 1.0f) {
+            float mag = shakeMag * (1.0f - t);
+            shakeOffX = ((float)GetRandomValue(-1000, 1000) / 1000.0f) * mag;
+            shakeOffY = ((float)GetRandomValue(-1000, 1000) / 1000.0f) * mag;
+        }
+    }
+    Camera2D cam = {};
+    cam.target   = { -shakeOffX, -shakeOffY };
+    cam.offset   = { 0.0f, 0.0f };
+    cam.rotation = 0.0f;
+    cam.zoom     = (float)RENDER_SCALE;
+    BeginMode2D(cam);
+
     for (int i = 0; i < WIN_W; i += 60)
         DrawLine(i, 0, i, WIN_H, { 255, 255, 255, 8 });
     for (int i = 0; i < WIN_H; i += 60)
@@ -1049,33 +1080,13 @@ static void frame() {
     if (state == GameState::Menu) {
         drawMenu();
     } else {
-        // Screen-shake: ~200ms decaying jitter applied via Camera2D so
-        // ALL gameplay draws are offset uniformly. Overlays (pause/game-over)
-        // stay outside the camera so they read cleanly.
-        float shakeOffX = 0.0f, shakeOffY = 0.0f;
-        bool shaking = false;
-        if (shakeStart >= 0.0) {
-            float t = (float)((GetTime() - shakeStart) / 0.20);
-            if (t < 1.0f) {
-                shaking = true;
-                float mag = shakeMag * (1.0f - t);
-                shakeOffX = ((float)GetRandomValue(-1000, 1000) / 1000.0f) * mag;
-                shakeOffY = ((float)GetRandomValue(-1000, 1000) / 1000.0f) * mag;
-            }
-        }
-        Camera2D cam = {};
-        cam.target   = { -shakeOffX, -shakeOffY };
-        cam.offset   = { 0.0f, 0.0f };
-        cam.rotation = 0.0f;
-        cam.zoom     = 1.0f;
-        if (shaking) BeginMode2D(cam);
         drawBoard();
         drawHud();
-        if (shaking) EndMode2D();
         if (state == GameState::Paused)   drawPause();
         if (state == GameState::GameOver) drawGameOver();
     }
 
+    EndMode2D();
     EndDrawing();
 
     // Clear edge-triggered touch counters after this frame consumed them.
@@ -1083,11 +1094,12 @@ static void frame() {
 }
 
 int main() {
-    // Render at the device's pixel ratio so the canvas isn't blurred when the
-    // browser CSS-upscales the framebuffer (e.g. 480 logical px → 1200 device
-    // px on a phone). On native this enables HiDPI on retina-class displays.
-    SetConfigFlags(FLAG_WINDOW_HIGHDPI | FLAG_MSAA_4X_HINT);
-    InitWindow(WIN_W, WIN_H, "Tetris");
+    // Render the framebuffer at RENDER_SCALE × logical size. The browser
+    // (or native OS) then downscales to fit the viewport — downsampling is
+    // always sharper than upsampling, so this kills the canvas blur on
+    // high-DPR phone screens without needing to refactor every coord.
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
+    InitWindow(WIN_W * RENDER_SCALE, WIN_H * RENDER_SCALE, "Tetris");
     SetExitKey(KEY_NULL);     // ESC is used for pause, not quit
     SetTargetFPS(60);
     rng.seed((unsigned)(GetTime() * 1e6) ^ 0xC0FFEEu);
