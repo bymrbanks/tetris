@@ -77,57 +77,90 @@
       -webkit-backdrop-filter: blur(6px);
       z-index: 100;
       display: none;
-      align-items: center; justify-content: center;
-      padding: 16px; box-sizing: border-box;
+      /* Top-anchored so the mobile keyboard never hides the panel.
+         Overlay itself scrolls if the panel gets taller than the viewport. */
+      align-items: flex-start; justify-content: center;
+      padding: max(16px, env(safe-area-inset-top)) 12px 24px;
+      box-sizing: border-box;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
     .overlay.visible { display: flex; }
     .panel {
       background: linear-gradient(180deg, #1c1830 0%, #15121f 100%);
       border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 16px;
-      padding: 22px;
-      max-width: 380px; width: 100%;
-      max-height: 90vh; overflow: auto;
+      border-radius: 18px;
+      padding: 26px 22px;
+      max-width: 440px; width: 100%;
+      margin-top: 4vh;       /* float slightly from top on desktop; harmless on mobile */
       box-shadow: 0 20px 80px rgba(0,0,0,0.65);
+    }
+    @media (max-width: 600px) {
+      .panel { margin-top: 0; padding: 22px 18px; border-radius: 16px; }
     }
     .panel h2 {
       margin: 0 0 6px; font-size: 13px; font-weight: 600;
       color: #888; letter-spacing: 1.5px; text-transform: uppercase;
     }
     .panel .big-score {
-      font-size: 44px; font-weight: 800;
+      font-size: 52px; font-weight: 800;
       color: #ffd166; letter-spacing: -1px;
-      margin: 2px 0;
+      margin: 4px 0 0;
       font-variant-numeric: tabular-nums;
+      line-height: 1;
     }
-    .panel .meta { color: #888; font-size: 13px; margin-bottom: 16px; }
+    .panel .meta { color: #888; font-size: 13px; margin: 6px 0 20px; }
+
+    /* Form fields */
+    .panel .field { margin-bottom: 18px; }
+    .panel .field:last-of-type { margin-bottom: 0; }
     .panel label {
-      display: block; font-size: 11px; color: #888;
-      letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
+      display: block;
+      font-size: 14px; font-weight: 600;
+      color: #e8e8e8;
+      letter-spacing: 0.2px;
+      margin-bottom: 8px;
     }
-    .panel input[type="text"] {
+    .panel .hint {
+      display: block;
+      font-size: 12px; color: #777;
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+    .panel input[type="text"],
+    .panel input[type="email"] {
       width: 100%; box-sizing: border-box;
-      padding: 12px 14px; font-size: 18px;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 10px;
-      color: #fff; letter-spacing: 1px;
+      padding: 16px 18px;
+      font-size: 19px;         /* keep ≥16px so iOS doesn't auto-zoom */
+      min-height: 56px;        /* thumb-friendly tap target */
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.20);
+      border-radius: 12px;
+      color: #fff;
       font-family: inherit;
+      -webkit-appearance: none; appearance: none;
     }
-    .panel input[type="text"]:focus {
+    .panel input[type="text"]  { letter-spacing: 2px; text-transform: uppercase; }
+    .panel input[type="email"] { letter-spacing: 0; }
+    .panel input:focus {
       outline: none;
-      border-color: rgba(74,214,255,0.7);
-      box-shadow: 0 0 0 3px rgba(74,214,255,0.15);
+      border-color: rgba(74,214,255,0.85);
+      box-shadow: 0 0 0 3px rgba(74,214,255,0.18);
+      background: rgba(255,255,255,0.10);
     }
-    .panel .btn-row { display: flex; gap: 10px; margin-top: 16px; }
+    .panel input::placeholder { color: #555; letter-spacing: 1px; }
+
+    .panel .btn-row { display: flex; gap: 10px; margin-top: 24px; }
     .panel .btn {
       flex: 1; appearance: none;
       border: 1px solid rgba(255,255,255,0.18);
       background: rgba(255,255,255,0.06);
       color: #e8e8e8;
-      padding: 12px; border-radius: 10px;
-      font-size: 14px; font-weight: 600; letter-spacing: 0.5px;
+      padding: 16px;
+      border-radius: 12px;
+      font-size: 15px; font-weight: 700; letter-spacing: 0.5px;
       cursor: pointer; font-family: inherit;
+      min-height: 56px;
       -webkit-tap-highlight-color: transparent;
     }
     .panel .btn.primary {
@@ -207,14 +240,21 @@
       <h2>Game Over</h2>
       <div class="big-score" id="submit-score">0</div>
       <div class="meta" id="submit-meta">—</div>
-      <label for="submit-name">Your name</label>
-      <input id="submit-name" type="text" maxlength="12"
-             autocomplete="off" autocapitalize="characters"
-             spellcheck="false" inputmode="text" placeholder="AAA">
-      <label for="submit-email" style="margin-top:14px">Email <span style="color:#666; text-transform:none; letter-spacing:0">— only if you want to win prizes</span></label>
-      <input id="submit-email" type="email" maxlength="254"
-             autocomplete="email" autocapitalize="none"
-             spellcheck="false" inputmode="email" placeholder="you@example.com">
+      <div class="field">
+        <label for="submit-name">Your name</label>
+        <input id="submit-name" type="text" maxlength="16"
+               autocomplete="off" autocapitalize="characters"
+               spellcheck="false" inputmode="text" enterkeyhint="next"
+               placeholder="AAA">
+      </div>
+      <div class="field">
+        <label for="submit-email">Email</label>
+        <input id="submit-email" type="email" maxlength="254"
+               autocomplete="email" autocapitalize="none"
+               spellcheck="false" inputmode="email" enterkeyhint="send"
+               placeholder="you@example.com">
+        <span class="hint">Only needed if you want to win challenge prizes — no spam, promise.</span>
+      </div>
       <div class="btn-row">
         <button class="btn" id="submit-skip">SKIP</button>
         <button class="btn primary" id="submit-go">SUBMIT</button>
@@ -444,6 +484,26 @@
       if (score > getStoredHigh()) setStoredHigh(score);
     }
     function closeSubmitOverlay() { submitOverlay.classList.remove('visible'); }
+
+    // Mobile UX: when an input gets focus, wait for the keyboard to start
+    // animating then scroll the field into view inside the overlay so it
+    // sits comfortably above the keyboard, not pinned to the top edge.
+    function bindFieldFocus(id) {
+      const el = document.getElementById(id);
+      el.addEventListener('focus', () => {
+        setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 250);
+      });
+    }
+    bindFieldFocus('submit-name');
+    bindFieldFocus('submit-email');
+
+    // Keyboard navigation: Enter on name → email, Enter on email → submit.
+    document.getElementById('submit-name').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('submit-email').focus(); }
+    });
+    document.getElementById('submit-email').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('submit-go').click(); }
+    });
 
     document.getElementById('submit-skip').addEventListener('click', closeSubmitOverlay);
     document.getElementById('submit-go').addEventListener('click', async () => {
