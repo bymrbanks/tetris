@@ -616,38 +616,48 @@ static Color darken(Color c, float k) {
     return c;
 }
 
-// Single-row 8-frame animation sheet (sprites/cell_sprites.png):
-//   col = animation frame (0 = intact, 1-4 = crack→burst, 5-7 = drift)
-// The source is max-channel-grayscale, so multiplicative tint with
-// PIECE_COLOR[type] recolors each frame to the matching piece hue
-// while preserving the shading. Loaded in main().
+// 8-frame animation sheet (sprites/cell_sprites.png), stacked vertically:
+//   ROW 0  (y = 0..207)   — tintable body (grayscale of cyan content)
+//   ROW 1  (y = 208..415) — white highlight overlay (alpha-keyed)
+// Each row is 8 frames wide: col 0 intact, cols 1-4 crack → burst, 5-7 drift.
+// Decomposition is done offline in Python; see the regen note in sprites/.
+// drawCell does two passes per cell: tinted body, then white highlight on top.
 static Texture2D animSheet = {};
 static const float SHEET_COLS    = 8.0f;
-static const float SHEET_ROWS    = 1.0f;
 static const float SHEET_W       = 1648.0f;
-static const float SHEET_H       = 208.0f;
-static const float SHEET_CELL_W  = SHEET_W / SHEET_COLS;   // 206
-static const float SHEET_CELL_H  = SHEET_H / SHEET_ROWS;   // 208
+static const float SHEET_CELL_W  = SHEET_W / SHEET_COLS;   // 206 per frame
+static const float SHEET_CELL_H  = 208.0f;                 // per row; full sheet is 2 rows tall
 
 static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL, int frame = 0) {
     if (animSheet.id > 0 && type >= 1 && type <= 7 && frame >= 0 && frame < (int)SHEET_COLS) {
-        // Multiplicative tint: gray source × piece color = piece-colored candy.
-        Color tint = PIECE_COLOR[type];
-        tint.a = (unsigned char)(255.0f * alpha);
         const float bleed = (float)sz * 0.05f;
-        Rectangle src = {
-            (float)frame * SHEET_CELL_W,
-            0.0f,
-            SHEET_CELL_W,
-            SHEET_CELL_H
-        };
         Rectangle dst = {
             (float)px - bleed * 0.5f,
             (float)py - bleed * 0.5f,
             (float)sz + bleed,
             (float)sz + bleed
         };
-        DrawTexturePro(animSheet, src, dst, {0, 0}, 0.0f, tint);
+        Rectangle srcBody = {
+            (float)frame * SHEET_CELL_W,
+            0.0f,
+            SHEET_CELL_W,
+            SHEET_CELL_H
+        };
+        Rectangle srcHL = {
+            srcBody.x,
+            SHEET_CELL_H,    // second row
+            SHEET_CELL_W,
+            SHEET_CELL_H
+        };
+        // Pass 1: tinted body (grayscale × piece color = piece-colored candy).
+        Color bodyTint = PIECE_COLOR[type];
+        bodyTint.a = (unsigned char)(255.0f * alpha);
+        DrawTexturePro(animSheet, srcBody, dst, {0, 0}, 0.0f, bodyTint);
+
+        // Pass 2: white specular highlight on top, alpha-blended.
+        Color hlTint = WHITE;
+        hlTint.a = (unsigned char)(255.0f * alpha);
+        DrawTexturePro(animSheet, srcHL, dst, {0, 0}, 0.0f, hlTint);
         return;
     }
 
