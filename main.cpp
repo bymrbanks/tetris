@@ -622,14 +622,8 @@ static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL
     if (type >= 1 && type <= 7 && cellTex[type].id > 0) {
         Color tint = WHITE;
         tint.a = (unsigned char)(255.0f * alpha);
-        const float bleed = (float)sz * 0.10f;
         Rectangle src = { 0, 0, (float)cellTex[type].width, (float)cellTex[type].height };
-        Rectangle dst = {
-            (float)px - bleed * 0.5f,
-            (float)py - bleed * 0.5f,
-            (float)sz + bleed,
-            (float)sz + bleed
-        };
+        Rectangle dst = { (float)px, (float)py, (float)sz, (float)sz };
         DrawTexturePro(cellTex[type], src, dst, {0, 0}, 0.0f, tint);
         return;
     }
@@ -1089,6 +1083,10 @@ static void frame() {
 }
 
 int main() {
+    // Render at the device's pixel ratio so the canvas isn't blurred when the
+    // browser CSS-upscales the framebuffer (e.g. 480 logical px → 1200 device
+    // px on a phone). On native this enables HiDPI on retina-class displays.
+    SetConfigFlags(FLAG_WINDOW_HIGHDPI | FLAG_MSAA_4X_HINT);
     InitWindow(WIN_W, WIN_H, "Tetris");
     SetExitKey(KEY_NULL);     // ESC is used for pause, not quit
     SetTargetFPS(60);
@@ -1097,10 +1095,14 @@ int main() {
     // Per-piece candy sprites — sit beside the binary on native, bundled into
     // the WASM virtual FS via emcc --preload-file on web. If any fail to load,
     // drawCell falls back to its procedural look for that piece.
+    // Mipmaps + trilinear filter give clean downsampling at any render size.
     const char* PIECE_LETTER[8] = { nullptr, "I", "O", "T", "S", "Z", "J", "L" };
     for (int i = 1; i <= 7; i++) {
         cellTex[i] = LoadTexture(TextFormat("sprites/cell_%s.png", PIECE_LETTER[i]));
-        if (cellTex[i].id > 0) SetTextureFilter(cellTex[i], TEXTURE_FILTER_BILINEAR);
+        if (cellTex[i].id > 0) {
+            GenTextureMipmaps(&cellTex[i]);
+            SetTextureFilter(cellTex[i], TEXTURE_FILTER_TRILINEAR);
+        }
     }
 
     resetGame();
