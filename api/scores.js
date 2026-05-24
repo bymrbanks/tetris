@@ -42,9 +42,9 @@ export default async function handler(req, res) {
   try {
     const ins = await db`
       INSERT INTO scores (name, score, lines, level, duration_ms,
-                          client_id, ip_hash, user_agent, country, challenge_id)
+                          client_id, ip_hash, user_agent, country, email, challenge_id)
       VALUES (${v.name}, ${body.score}, ${body.lines}, ${body.level}, ${body.durationMs},
-              ${body.clientId}::uuid, ${ipHashBuf}, ${userAgent}, ${country}, ${challengeId})
+              ${body.clientId}::uuid, ${ipHashBuf}, ${userAgent}, ${country}, ${v.email}, ${challengeId})
       RETURNING id
     `;
     id = ins[0].id;

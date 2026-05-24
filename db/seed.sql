@@ -6,8 +6,8 @@ VALUES (
   'launch-week',
   'Launch Week',
   'First competition — fight for the crown.',
-  'Eternal bragging rights',
+  '$20 USD',
   now() - interval '1 day',
   now() + interval '7 days'
 )
-ON CONFLICT (slug) DO NOTHING;
+ON CONFLICT (slug) DO UPDATE SET prize = EXCLUDED.prize;

@@ -211,6 +211,10 @@
       <input id="submit-name" type="text" maxlength="12"
              autocomplete="off" autocapitalize="characters"
              spellcheck="false" inputmode="text" placeholder="AAA">
+      <label for="submit-email" style="margin-top:14px">Email <span style="color:#666; text-transform:none; letter-spacing:0">— only if you want to win prizes</span></label>
+      <input id="submit-email" type="email" maxlength="254"
+             autocomplete="email" autocapitalize="none"
+             spellcheck="false" inputmode="email" placeholder="you@example.com">
       <div class="btn-row">
         <button class="btn" id="submit-skip">SKIP</button>
         <button class="btn primary" id="submit-go">SUBMIT</button>
@@ -263,8 +267,10 @@
       if (!id) { id = uuid(); localStorage.setItem('clientId', id); }
       return id;
     }
-    const getStoredName = () => localStorage.getItem('playerName') || '';
-    const setStoredName = n  => localStorage.setItem('playerName', n);
+    const getStoredName  = () => localStorage.getItem('playerName')  || '';
+    const setStoredName  = n  => localStorage.setItem('playerName',  n);
+    const getStoredEmail = () => localStorage.getItem('playerEmail') || '';
+    const setStoredEmail = e  => localStorage.setItem('playerEmail', e);
     const getStoredHigh = () => parseInt(localStorage.getItem('highScore') || '0', 10);
     const setStoredHigh = v  => localStorage.setItem('highScore', String(v));
 
@@ -428,8 +434,10 @@
       document.getElementById('submit-meta').textContent =
         'Lines ' + lines + '  ·  Level ' + level + '  ·  ' + mins + ':' + String(secs).padStart(2, '0');
 
-      const nameInput = document.getElementById('submit-name');
-      nameInput.value = getStoredName();
+      const nameInput  = document.getElementById('submit-name');
+      const emailInput = document.getElementById('submit-email');
+      nameInput.value  = getStoredName();
+      emailInput.value = getStoredEmail();
       submitOverlay.classList.add('visible');
       setTimeout(() => nameInput.focus(), 50);
 
@@ -439,11 +447,14 @@
 
     document.getElementById('submit-skip').addEventListener('click', closeSubmitOverlay);
     document.getElementById('submit-go').addEventListener('click', async () => {
-      const nameInput = document.getElementById('submit-name');
+      const nameInput  = document.getElementById('submit-name');
+      const emailInput = document.getElementById('submit-email');
       let name = nameInput.value.trim();
       if (!name) name = 'AAA';
       if (name.length > 12) name = name.slice(0, 12);
+      const email = emailInput.value.trim();
       setStoredName(name);
+      setStoredEmail(email);
 
       const payload = {
         name,
@@ -451,7 +462,8 @@
         lines: safeCall('getLines') || 0,
         level: safeCall('getLevel') || 1,
         durationMs: safeCall('getDurationMs') || 0,
-        clientId: getClientId()
+        clientId: getClientId(),
+        email: email || null
       };
       const btn = document.getElementById('submit-go');
       btn.disabled = true; btn.textContent = '…';

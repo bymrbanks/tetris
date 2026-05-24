@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS scores (
   ip_hash      bytea       NOT NULL,                  -- sha256(ip + daily salt), never raw
   user_agent   text,
   country      text,                                  -- from x-vercel-ip-country
+  email        text,                                  -- optional, for challenge-prize contact
   created_at   timestamptz NOT NULL DEFAULT now(),
   challenge_id integer     REFERENCES challenges(id) ON DELETE SET NULL
 );

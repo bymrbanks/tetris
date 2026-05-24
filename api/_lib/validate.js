@@ -16,6 +16,17 @@ export function validateSubmit(body) {
     return { ok: false, error: 'clientId must be uuid' };
   }
 
+  // Optional email — accept empty/missing, validate shape if present
+  let email = null;
+  if (body.email !== undefined && body.email !== null && body.email !== '') {
+    if (typeof body.email !== 'string') return { ok: false, error: 'email must be string' };
+    const e = body.email.trim().toLowerCase();
+    if (e.length > 254) return { ok: false, error: 'email too long' };
+    // Pragmatic shape check — not RFC-perfect, but rejects obvious garbage
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, error: 'email invalid' };
+    email = e;
+  }
+
   // Name normalize + blocklist
   const name = normalizeName(body.name);
   if (!name) return { ok: false, error: 'name not allowed (use letters/numbers, 1–16 chars)' };
@@ -47,7 +58,7 @@ export function validateSubmit(body) {
     return { ok: false, error: 'score/duration ratio implausible' };
   }
 
-  return { ok: true, name };
+  return { ok: true, name, email };
 }
 
 export function validateChallenge(body) {
