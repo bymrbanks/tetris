@@ -104,7 +104,7 @@ constexpr int HUD_BOTTOM_Y = BOARD_Y + BOARD_PX_H + 12;   // 752 → strip below
 constexpr float DAS_DELAY   = 0.16f;   // delayed auto-shift initial wait
 constexpr float DAS_REPEAT  = 0.04f;   // shift repeat interval
 constexpr float LOCK_DELAY  = 0.50f;   // grace period before locking on ground
-constexpr float CLEAR_FLASH = 0.30f;   // line-clear animation length
+constexpr float CLEAR_FLASH = 0.40f;   // line-clear animation length (5-frame shatter + L→R stagger)
 
 // =================================================================
 // Tetromino shapes — 7 pieces, 4 rotations, 4x4 grid each
@@ -616,26 +616,38 @@ static Color darken(Color c, float k) {
     return c;
 }
 
-// Per-piece sprite textures (1..7; index 0 = empty, unused).
-// Loaded in main() from sprites/cell_<LETTER>.png. When loaded,
-// drawCell uses them instead of the procedural look.
-static Texture2D cellTex[8] = {{0}};
+// Single 7×10 sprite sheet (sprites/cell_sprites.png):
+//   row = piece type - 1 (I, O, T, S, Z, J, L)
+//   col = animation frame (0 = intact, 1-4 = crack→burst, 5-9 = unused drift/empty)
+// Loaded in main(). drawCell defaults to frame 0; line-clear animation passes 1..4.
+static Texture2D animSheet = {};
+static const float SHEET_COLS    = 10.0f;
+static const float SHEET_ROWS    = 7.0f;
+static const float SHEET_W       = 1280.0f;
+static const float SHEET_H       = 1280.0f;
+static const float SHEET_CELL_W  = SHEET_W / SHEET_COLS;   // 128
+static const float SHEET_CELL_H  = SHEET_H / SHEET_ROWS;   // 182.857...
 
-static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL) {
+static void drawCell(int px, int py, int type, float alpha = 1.0f, int sz = CELL, int frame = 0) {
     // Sprite path. Renders slightly larger than the cell so candy bodies
     // visually touch through their small transparent margins.
-    if (type >= 1 && type <= 7 && cellTex[type].id > 0) {
+    if (animSheet.id > 0 && type >= 1 && type <= 7 && frame >= 0 && frame < (int)SHEET_COLS) {
         Color tint = WHITE;
         tint.a = (unsigned char)(255.0f * alpha);
-        const float bleed = (float)sz * 0.05f;     // mild overdraw so adjacent cells visually touch
-        Rectangle src = { 0, 0, (float)cellTex[type].width, (float)cellTex[type].height };
+        const float bleed = (float)sz * 0.05f;
+        Rectangle src = {
+            (float)frame * SHEET_CELL_W,
+            (float)(type - 1) * SHEET_CELL_H,
+            SHEET_CELL_W,
+            SHEET_CELL_H
+        };
         Rectangle dst = {
             (float)px - bleed * 0.5f,
             (float)py - bleed * 0.5f,
             (float)sz + bleed,
             (float)sz + bleed
         };
-        DrawTexturePro(cellTex[type], src, dst, {0, 0}, 0.0f, tint);
+        DrawTexturePro(animSheet, src, dst, {0, 0}, 0.0f, tint);
         return;
     }
 
@@ -763,41 +775,62 @@ static void drawBoard() {
 
     // empty grid lines + locked cells (with per-cell "pop" bounce on freshly-locked tiles)
     double now = GetTime();
+
+    // Line-clear animation parameters: 4-frame shatter (frames 1..4) per cell,
+    // staggered left-to-right so the row blows up like a sweep.
+    constexpr float CLEAR_STAGGER     = 0.020f;   // 20 ms per column delay
+    constexpr float CLEAR_PER_CELL    = 0.20f;    // each cell's animation duration
+
     for (int y = 0; y < BOARD_H; y++) {
+        // Is this row in the clearingLines[] set?
+        bool clearing = false;
+        if (clearAnimating) {
+            for (int i = 0; i < numClearing; i++) {
+                if (clearingLines[i] == y) { clearing = true; break; }
+            }
+        }
+
         for (int x = 0; x < BOARD_W; x++) {
+            int px = BOARD_X + x * CELL;
+            int py = BOARD_Y + y * CELL;
+
             if (board[y][x]) {
-                int px = BOARD_X + x * CELL;
-                int py = BOARD_Y + y * CELL;
-                float lt = lockTime[y][x];
-                float elapsed = (lt >= 0.0f) ? (float)(now - lt) : 1.0f;
-                if (elapsed >= 0.0f && elapsed < 0.15f) {
-                    float t = elapsed / 0.15f;
-                    // easeOutBack overshoots ~10% — map 0..1 → 1.0..1.12..1.0
-                    // by using the back curve as a pulse around 1.0.
-                    float overshoot = easeOutBack(t);   // 0 → 1 with overshoot
-                    // Pulse: scale grows up to 1.12 around t=0.5, settles to 1.0 at t=1.
-                    float pulse = 1.0f + 0.12f * (1.0f - std::pow(2.0f * t - 1.0f, 2.0f)) * overshoot;
-                    int sz = (int)std::round((float)CELL * pulse);
-                    int off = (sz - CELL) / 2;
-                    drawCell(px - off, py - off, board[y][x], 1.0f, sz);
+                if (clearing) {
+                    // Staggered shatter: column x starts at t = x * CLEAR_STAGGER
+                    float localT = (clearAnimTimer - (float)x * CLEAR_STAGGER) / CLEAR_PER_CELL;
+                    if (localT >= 1.0f) {
+                        // animation done — skip drawing (cell will be removed by finishLineClear)
+                    } else {
+                        int frame = 0;
+                        if (localT > 0.0f) {
+                            // map localT 0..1 → frame 1..4 (skip frame 0; we want the crack to *start* immediately)
+                            frame = 1 + (int)(localT * 4.0f);
+                            if (frame > 4) frame = 4;
+                        }
+                        drawCell(px, py, board[y][x], 1.0f, CELL, frame);
+                    }
                 } else {
-                    drawCell(px, py, board[y][x]);
+                    float lt = lockTime[y][x];
+                    float elapsed = (lt >= 0.0f) ? (float)(now - lt) : 1.0f;
+                    if (elapsed >= 0.0f && elapsed < 0.15f) {
+                        float t = elapsed / 0.15f;
+                        float overshoot = easeOutBack(t);
+                        float pulse = 1.0f + 0.12f * (1.0f - std::pow(2.0f * t - 1.0f, 2.0f)) * overshoot;
+                        int sz = (int)std::round((float)CELL * pulse);
+                        int off = (sz - CELL) / 2;
+                        drawCell(px - off, py - off, board[y][x], 1.0f, sz);
+                    } else {
+                        drawCell(px, py, board[y][x]);
+                    }
                 }
             } else {
-                DrawRectangleLines(BOARD_X + x * CELL, BOARD_Y + y * CELL,
-                                   CELL, CELL, { 30, 30, 45, 255 });
+                DrawRectangleLines(px, py, CELL, CELL, { 30, 30, 45, 255 });
             }
         }
     }
 
     if (clearAnimating) {
-        float t = clearAnimTimer / CLEAR_FLASH;
-        unsigned char a = (unsigned char)(255.0f * (1.0f - t));
-        for (int i = 0; i < numClearing; i++) {
-            int y = clearingLines[i];
-            DrawRectangle(BOARD_X, BOARD_Y + y * CELL, BOARD_PX_W, CELL,
-                          { 255, 255, 255, a });
-        }
+        // No flash overlay — the shatter sprite frames 3-4 have a flash baked in.
     } else {
         // Ghost piece
         int gy = ghostY();
@@ -1104,17 +1137,13 @@ int main() {
     SetTargetFPS(60);
     rng.seed((unsigned)(GetTime() * 1e6) ^ 0xC0FFEEu);
 
-    // Per-piece candy sprites — sit beside the binary on native, bundled into
-    // the WASM virtual FS via emcc --preload-file on web. If any fail to load,
-    // drawCell falls back to its procedural look for that piece.
-    // Mipmaps + trilinear filter give clean downsampling at any render size.
-    const char* PIECE_LETTER[8] = { nullptr, "I", "O", "T", "S", "Z", "J", "L" };
-    for (int i = 1; i <= 7; i++) {
-        cellTex[i] = LoadTexture(TextFormat("sprites/cell_%s.png", PIECE_LETTER[i]));
-        if (cellTex[i].id > 0) {
-            GenTextureMipmaps(&cellTex[i]);
-            SetTextureFilter(cellTex[i], TEXTURE_FILTER_TRILINEAR);
-        }
+    // Animation sheet — single 7×10 sprite sheet. Row = piece type-1, col 0
+    // is the intact candy used during normal gameplay; cols 1..4 play during
+    // line-clear (crack → burst). Mipmaps + trilinear give crisp downsampling.
+    animSheet = LoadTexture("sprites/cell_sprites.png");
+    if (animSheet.id > 0) {
+        GenTextureMipmaps(&animSheet);
+        SetTextureFilter(animSheet, TEXTURE_FILTER_TRILINEAR);
     }
 
     resetGame();

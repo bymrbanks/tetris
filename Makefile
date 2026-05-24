@@ -93,12 +93,12 @@ $(BUILD_DIR)/main.o: main.cpp
 	@mkdir -p $(BUILD_DIR)
 	$(EMCC) $(EMCC_COMMON) -std=c++17 -c main.cpp -o $@
 
-SPRITES := $(wildcard sprites/cell_*.png)
+SPRITES := sprites/cell_sprites.png
 
 $(WEB_DIR)/index.html: $(BUILD_DIR)/main.o $(RAYLIB_OBJS) shell.html $(SPRITES)
 	@mkdir -p $(WEB_DIR)
 	$(EMCC) -o $@ $(BUILD_DIR)/main.o $(RAYLIB_OBJS) $(EMCC_COMMON) $(EMCC_LINK) \
-	    $(foreach s,$(SPRITES),--preload-file $(s)) \
+	    --preload-file $(SPRITES) \
 	    --shell-file shell.html
 
 serve: web
